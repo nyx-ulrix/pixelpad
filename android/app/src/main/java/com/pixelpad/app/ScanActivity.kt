@@ -95,11 +95,13 @@ class ScanActivity : Activity() {
 
         val steps = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            addView(Flow(this@ScanActivity, listOf("present", "qr", "camera", "check")), LinearLayout.LayoutParams(-1, dp(64))); addView(space(14))
+            addView(Flow(this@ScanActivity, listOf("present", "qr", "camera", "check")), LinearLayout.LayoutParams(-1, dp(64))); addView(space(8))
+            addView(label("1. OPEN PIXELPAD DESK ON YOUR PC", 12f)); addView(space(4))
+            addView(label("2. POINT THIS CAMERA AT ITS QR CODE", 12f)); addView(space(14))
             addView(status); addView(space(8))
             addView(blocks, LinearLayout.LayoutParams(-1, dp(18))); addView(space(18))
-            addView(pill("", LILAC, "keyboard") { setResult(RESULT_FIRST_USER); finish() }); addView(space(8))
-            addView(pill("", GREEN, "usb") { tryUsb() }); addView(space(8))
+            addView(pill("TYPE THE ADDRESS", LILAC, "keyboard") { setResult(RESULT_FIRST_USER); finish() }); addView(space(8))
+            addView(pill("USE THE USB CABLE", GREEN, "usb") { tryUsb() }); addView(space(8))
             addView(pill("SKIP FOR NOW", PINK, "x") { finish() })
         }
 
@@ -114,7 +116,7 @@ class ScanActivity : Activity() {
         }
         val titleBar = LinearLayout(this).apply {
             setBackgroundColor(LILAC); gravity = Gravity.CENTER_VERTICAL
-            addView(label("", 14f).apply { setPadding(dp(14), dp(8), dp(14), dp(8)); setCompoundDrawablesWithIntrinsicBounds(IconDrawable("qr", INK, dp(28)), null, null, null) }, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(label("SCAN TO CONNECT", 14f).apply { setPadding(dp(14), dp(8), dp(14), dp(8)); compoundDrawablePadding = dp(10); setCompoundDrawablesWithIntrinsicBounds(IconDrawable("qr", INK, dp(28)), null, null, null) }, LinearLayout.LayoutParams(0, -2, 1f))
             addView(close, LinearLayout.LayoutParams(-2, dp(34)).apply { marginEnd = dp(6) })
         }
         val window = LinearLayout(this).apply {

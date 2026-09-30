@@ -139,12 +139,12 @@ class SettingsActivity : Activity() {
         val pills = ArrayList<Pair<TextView, String>>()
         fun paint() = pills.forEach { (t, v) ->
             val on = get() == v; t.background = shape(if (on) HOT else PAPER, dp(24)); t.setTextColor(if (on) PAPER else INK)
-            icons[v]?.let { t.setCompoundDrawablesWithIntrinsicBounds(iconD(it, if (on) PAPER else INK), null, null, null) }
+            icons[v]?.let { t.compoundDrawablePadding = dp(8); t.setCompoundDrawablesWithIntrinsicBounds(iconD(it, if (on) PAPER else INK), null, null, null) }
         }
         val col = vbox(); col.addView(label(name, 12f), lp(bottom = 4))
         val row = LinearLayout(this).apply { orientation = if (opts.size > 4) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL }
         opts.forEachIndexed { i, (text, v) ->
-            val t = pill(if (icons.containsKey(v)) "" else text) { set(v); paint() }.also { if (icons.containsKey(v)) it.centred() }; pills.add(t to v)
+            val t = pill(text) { set(v); paint() }.also { if (icons.containsKey(v)) it.centred() }; pills.add(t to v)
             row.addView(t, if (opts.size > 4) lp(bottom = 4) else LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { if (i > 0) marginStart = dp(6) })
         }
         col.addView(row); paint(); return col
@@ -217,13 +217,13 @@ class SettingsActivity : Activity() {
         val checks = vbox()
         content.addView(card("LINK", BABY,
             pill("SCAN THE QR CODE FROM PIXELPAD DESK", LILAC, icon = "qr") { save(); startActivityForResult(Intent(this@SettingsActivity, ScanActivity::class.java), 5) },
-            chooser("HOW TO CONNECT", listOf("USB" to "usb", "WI-FI" to "wifi", "BLUETOOTH" to "bt"), { Cfg.transport }, { Cfg.transport = it; Core.applyConnection(); show(0) }, mapOf("usb" to "usb", "wifi" to "wifi", "bt" to "bt")),
+            chooser("HOW TO CONNECT", listOf("USB CABLE" to "usb", "WI-FI" to "wifi", "BLUETOOTH" to "bt"), { Cfg.transport }, { Cfg.transport = it; Core.applyConnection(); show(0) }, mapOf("usb" to "usb", "wifi" to "wifi", "bt" to "bt")),
             if (Cfg.transport != "usb") vbox().apply {
                 addView(label("PC ADDRESS", 11f), lp(bottom = 4)); addView(address, lp())
                 addView(label("PORT", 11f), lp(bottom = 4)); addView(port, lp())
-                addView(hbox(pill("", GREEN, icon = "check") { save(); msg.text = "SAVED" }), lp())
+                addView(hbox(pill("SAVE", GREEN, icon = "check") { save(); msg.text = "SAVED" }), lp())
             } else note("USB NEEDS PIXELPAD DESK OPEN ON THE PC. IT SETS UP THE CABLE LINK BY ITSELF."),
-            msg, hbox(pill("", BABY, icon = "retry") { saveConn?.invoke(); Core.sender.reconnect(); msg.text = "" })))
+            msg, hbox(pill("RETRY", BABY, icon = "retry") { saveConn?.invoke(); Core.sender.reconnect(); msg.text = "" })))
         content.addView(card("CHECKLIST: WHY CAN'T I CONNECT?", GREEN, checks))
         val statLabel = label("", 10.5f)
         var sig = ""
