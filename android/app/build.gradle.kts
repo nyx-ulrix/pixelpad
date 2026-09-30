@@ -12,7 +12,13 @@ android {
         minSdk = 24
         targetSdk = 35
         versionCode = 1
-        versionName = "1.0"
+        versionName = "1.0.0"
+    }
+    buildTypes {
+        release {
+            signingConfig = signingConfigs.getByName("debug")   // sideload build: signed with the standard debug key so it installs directly
+            isMinifyEnabled = false
+        }
     }
 }
 

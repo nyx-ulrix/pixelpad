@@ -11,6 +11,8 @@ A retro pastel pixel app on the tablet, and a small companion, **PixelPad Desk**
 
 You need a Windows 10 (1809 or newer) or Windows 11 PC and an Android 7+ tablet or phone.
 
+**Download:** the [latest release](https://github.com/nyx-ulrix/pixelpad/releases/latest) has `PixelPad-1.0.0.apk` (install it on the tablet; it is signed with the standard debug key, so Android will ask you to allow installs from unknown sources) and `PixelPadDesk-1.0.0.exe` (run it on the PC, no install needed), plus `SHA256SUMS.txt`. Or build both yourself:
+
 **PC (PixelPad Desk)**
 ```
 pip install -r server/requirements.txt
