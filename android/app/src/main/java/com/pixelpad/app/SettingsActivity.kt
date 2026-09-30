@@ -208,22 +208,31 @@ class SettingsActivity : Activity() {
 
     // ---------- pages ----------
     private fun connection() {
-        val address = input("PC ADDRESS, E.G. 192.168.1.20", Cfg.host)
-        val port = input("PORT", Cfg.port.toString(), true)
-        val save = { Cfg.host = address.text.toString().trim(); Cfg.port = port.text.toString().toIntOrNull() ?: 7777; Core.applyConnection() }
-        address.setOnFocusChangeListener { _, f -> if (!f) save() }; port.setOnFocusChangeListener { _, f -> if (!f) save() }
-        saveConn = { if (Cfg.transport != "usb") save() }
         val msg = label("", 10.5f, HOT)
         val checks = vbox()
+        val pcBox = vbox()
+        fun use(pc: SavedPc) { Cfg.selectPc(pc); if (Cfg.transport == "usb") Cfg.transport = "wifi"; Core.applyConnection(); Core.sender.reconnect() }
+        fun rebuildPcs() {
+            pcBox.removeAllViews()
+            if (Cfg.pcs.isEmpty()) pcBox.addView(note("NO PC SAVED YET. SCAN THE QR CODE IN PIXELPAD DESK, OR ADD ONE BY ITS ADDRESS."), lp())
+            Cfg.pcs.toList().forEach { pc ->
+                val active = Cfg.activePc() === pc
+                pcBox.addView(hbox(pill(pc.name, if (active) GREEN else PAPER, icon = if (active) "check" else "present") { use(pc); show(0) },
+                    pill("", BABY, icon = "edit") { pcDialog(pc) { rebuildPcs() } },
+                    pill("", PINK, icon = "x") { confirm("FORGET THIS PC?", pc.name) { Cfg.removePc(pc); Core.applyConnection(); show(0) } }, weights = false).apply {
+                    (getChildAt(0).layoutParams as LinearLayout.LayoutParams).apply { weight = 1f; width = 0 }
+                }, lp())
+            }
+        }
+        rebuildPcs()
         content.addView(card("LINK", BABY,
-            pill("SCAN THE QR CODE FROM PIXELPAD DESK", LILAC, icon = "qr") { save(); startActivityForResult(Intent(this@SettingsActivity, ScanActivity::class.java), 5) },
             chooser("HOW TO CONNECT", listOf("USB CABLE" to "usb", "WI-FI" to "wifi", "BLUETOOTH" to "bt"), { Cfg.transport }, { Cfg.transport = it; Core.applyConnection(); show(0) }, mapOf("usb" to "usb", "wifi" to "wifi", "bt" to "bt")),
             if (Cfg.transport != "usb") vbox().apply {
-                addView(label("PC ADDRESS", 11f), lp(bottom = 4)); addView(address, lp())
-                addView(label("PORT", 11f), lp(bottom = 4)); addView(port, lp())
-                addView(hbox(pill("SAVE", GREEN, icon = "check") { save(); msg.text = "SAVED" }), lp())
+                addView(label("MY PCS", 11f), lp(bottom = 4)); addView(pcBox)
+                addView(pill("SCAN THE QR CODE FROM PIXELPAD DESK", LILAC, icon = "qr") { startActivityForResult(Intent(this@SettingsActivity, ScanActivity::class.java), 5) }, lp())
+                addView(pill("ADD A PC BY ITS ADDRESS", PAPER, icon = "plus") { pcDialog(null) { show(0) } }, lp())
             } else note("USB NEEDS PIXELPAD DESK OPEN ON THE PC. IT SETS UP THE CABLE LINK BY ITSELF."),
-            msg, hbox(pill("RETRY", BABY, icon = "retry") { saveConn?.invoke(); Core.sender.reconnect(); msg.text = "" })))
+            msg, hbox(pill("RETRY", BABY, icon = "retry") { Core.sender.reconnect(); msg.text = "" })))
         content.addView(card("CHECKLIST: WHY CAN'T I CONNECT?", GREEN, checks))
         val statLabel = label("", 10.5f)
         var sig = ""
@@ -247,6 +256,28 @@ class SettingsActivity : Activity() {
         }
     }
 
+    /**
+     * Name a PC, or add one by its address. The address is only ever typed here; once saved it is never shown again.
+     * pc = null adds a new one (name, address and port); otherwise it renames that PC.
+     */
+    private fun pcDialog(pc: SavedPc?, done: () -> Unit) {
+        val name = input("NAME, E.G. HOME PC", pc?.name ?: "")
+        val address = input("PC ADDRESS", ""); val port = input("PORT", "7777", true)
+        val box = vbox().apply {
+            setPadding(dp(16), dp(12), dp(16), dp(4)); background = shape(PAPER, dp(4))
+            addView(label("NAME", 11f), lp(bottom = 4)); addView(name, lp())
+            if (pc == null) { addView(label("PC ADDRESS (SHOWN IN PIXELPAD DESK'S SETTINGS IF YOU CAN'T SCAN)", 10f), lp(bottom = 4)); addView(address, lp()); addView(label("PORT", 11f), lp(bottom = 4)); addView(port, lp()) }
+        }
+        AlertDialog.Builder(this).setView(box).setPositiveButton("SAVE") { _, _ ->
+            if (pc != null) { pc.name = name.text.toString().trim().take(20).ifEmpty { pc.name }; Cfg.savePcs(); done() }
+            else if (address.text.isBlank()) Toast.makeText(this, "TYPE THE PC'S ADDRESS", Toast.LENGTH_SHORT).show()
+            else {
+                val saved = Cfg.addPc(name.text.toString(), address.text.toString().trim(), port.text.toString().toIntOrNull() ?: 7777)
+                Cfg.selectPc(saved); Cfg.transport = "wifi"; Core.applyConnection(); Core.sender.reconnect(); done()
+            }
+        }.setNegativeButton("CANCEL", null).show()
+    }
+
     private fun connectionChecks(): List<Check> {
         val r = ArrayList<Check>(); val t = Cfg.transport; val conn = Core.sender.connected(); val err = Core.sender.lastError
         if (t == "usb") {
@@ -263,7 +294,8 @@ class SettingsActivity : Activity() {
                 val bt = try { android.bluetooth.BluetoothAdapter.getDefaultAdapter()?.isEnabled == true } catch (e: SecurityException) { true }
                 r += Check(bt, "BLUETOOTH IS ON", "TURN BLUETOOTH ON AND PAIR WITH THE PC.")
             }
-            r += Check(Cfg.host.isNotBlank() && err != "badhost", "PC ADDRESS IS SET (${Cfg.host.ifBlank { "NONE" }}:${Cfg.port})", "TAP SCAN QR AND SCAN THE CODE IN PIXELPAD DESK, OR TYPE THE ADDRESS IT SHOWS.")
+            val pc = Cfg.activePc()
+            r += Check(pc != null && err != "badhost", if (pc != null) "PC SAVED: ${pc.name}" else "NO PC SAVED YET", "SCAN THE QR CODE IN PIXELPAD DESK, OR ADD A PC BY ITS ADDRESS.")
         }
         val hint = when (t) {
             "usb" -> "PIXELPAD DESK MUST BE OPEN ON THE PC. PRESS RECONNECT USB THERE, OR TRY WI-FI."
@@ -542,7 +574,7 @@ class SettingsActivity : Activity() {
             note("LOCK: ON ANY SCREEN, DOUBLE-TAP THE LOCK ICON AT THE TOP LEFT. THE SCREEN GOES DARK AND MINIMAL (STILL IN THE SAME COLOURS), THE TOP BAR STOPS RESPONDING, AND YOU KEEP WHAT YOU NEED: THE PEN, YOUR TABLET BUTTONS, THE CONTROLLER OR THE PREV / NEXT BUTTONS. DOUBLE-TAP AGAIN TO UNLOCK.")))
         content.addView(card("RESET", PINK, pill("RESET EVERYTHING", PAPER, icon = "retry") {
             AlertDialog.Builder(this).setTitle("RESET ALL SETTINGS?").setMessage("THIS CLEARS EVERY SETTING, BUTTON, GESTURE AND LAYOUT.")
-                .setPositiveButton("RESET") { _, _ -> Cfg.prefs.edit().clear().apply(); Cfg.keys.clear(); Cfg.seedKeys(); Cfg.gestures.clear(); Cfg.penButtons.clear(); Cfg.resetPenButtons(); Core.applyConnection(); show(8) }
+                .setPositiveButton("RESET") { _, _ -> Cfg.prefs.edit().clear().apply(); Cfg.pcs.clear(); Cfg.keys.clear(); Cfg.seedKeys(); Cfg.gestures.clear(); Cfg.penButtons.clear(); Cfg.resetPenButtons(); Core.applyConnection(); show(8) }
                 .setNegativeButton("CANCEL", null).show()
         }))
     }

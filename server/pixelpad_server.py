@@ -595,7 +595,7 @@ def diagnose(srv, port):
                   "Install Android platform-tools, or set the ANDROID_HOME variable." ))
         lines = [l.split() for l in (adb("devices") or "").splitlines()[1:] if l.strip()]
         ready = [l for l in lines if l[-1] == "device"]; unauth = [l for l in lines if l[-1] == "unauthorized"]
-        if ready: r.append(("ok", f"TABLET SEEN OVER USB ({ready[0][0]})", ""))
+        if ready: r.append(("ok", "TABLET SEEN OVER USB", ""))   # not its serial number
         elif unauth: r.append(("fail", "TABLET FOUND BUT NOT ALLOWED", "Look at the tablet and tap ALLOW on the USB debugging prompt."))
         else: r.append(("fail", "NO TABLET OVER USB", "Use a data cable, turn on USB debugging (Developer options), then re-check. Wi-Fi works without a cable."))
         rev = f"tcp:{PHONE_PORT} tcp:{port}" in (adb("reverse", "--list") or "")

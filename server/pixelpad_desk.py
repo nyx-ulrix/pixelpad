@@ -1,5 +1,6 @@
 """PixelPad Desk: window app for the PC side of PixelPad (retro pixel style)."""
 import ctypes, functools, json, math, os, socket, sys, threading, time, tkinter as tk
+from urllib.parse import quote
 from tkinter import scrolledtext
 import segno
 import pixelpad_server as ns
@@ -45,7 +46,7 @@ def save():
         os.makedirs(os.path.dirname(CFG), exist_ok=True)
         with open(CFG, "w") as f:
             json.dump({"open": {k: w["visible"] for k, w in reg.items()}, "speed": srv.speed, "area_mode": srv.area_mode,
-                       "custom": list(srv.custom), "screen": screen_idx[0], "highlight": hl["on"], "hl_size": hl["size"], "hl_style": hl["style"], "hl_color": hl["color"], "hl_thick": hl["thick"], "allow_record": srv.allow_record}, f)
+                       "custom": list(srv.custom), "screen": screen_idx[0], "highlight": hl["on"], "hl_size": hl["size"], "hl_style": hl["style"], "hl_color": hl["color"], "hl_thick": hl["thick"], "allow_record": srv.allow_record, "pc_name": pc_name.get().strip()[:20] or "MY PC"}, f)
     except OSError: pass
 
 def tip(w, text):
@@ -94,6 +95,7 @@ PORT = srv.open(7777) or 7777  # the first free port from 7777 up; the QR code a
 if isinstance(cfg.get("custom"), list) and len(cfg["custom"]) == 4: srv.custom = tuple(int(v) for v in cfg["custom"])
 overlay_on = False
 srv.allow_record = bool(cfg.get("allow_record", False))
+pc_name = tk.StringVar(value=str(cfg.get("pc_name", "MY PC")).strip()[:20] or "MY PC")   # the name the tablet saves this PC under (you choose it)
 screen_idx = [int(cfg.get("screen", 0))]
 hl = srv.ring   # shared with the tablet, which can change it too
 hl.update(on=bool(cfg.get("highlight", True)), size=int(cfg.get("hl_size", 90)), style=int(cfg.get("hl_style", 0)) % 3,
@@ -337,21 +339,34 @@ def compute_ips():
     return [primary] + [i for i in found if i != primary] if primary else found
 
 ips = compute_ips()
-ip = tk.StringVar(value=ips[0] if ips else "")
+ip = tk.StringVar(value=ips[0] if ips else "")   # the address inside the QR code; it is never drawn as text
+net = tk.StringVar(value="NETWORK 1")
 label(d, text="THE TABLET SCANS THIS ON START, OR: SETTINGS > CONNECTION > SCAN", font=FS, wraplength=int(300 * SC)).pack(fill="x", side="bottom")
 flow = label(d); pic(flow, ("present", "right", "qr", "right", "camera", "right", "check"), INK, int(26 * SC)); flow.pack(side="bottom")
-menu = tk.OptionMenu(d, ip, *(ips or ["no network"])); menu.config(bg=PAPER, fg=INK, font=FS, highlightbackground=INK, relief="solid")
-menu.pack(fill="x", side="bottom", pady=4)
+menu = tk.OptionMenu(d, net, "NETWORK 1"); menu.config(bg=PAPER, fg=INK, font=FS, highlightbackground=INK, relief="solid")
 qr = tk.Canvas(d, bg=PAPER, highlightthickness=T, highlightbackground=INK); qr.pack(fill="both", expand=True)
 
+def pick_net(lab):
+    n = int(lab.split()[-1]) - 1
+    if n < len(ips): ip.set(ips[n])
+
+def rebuild_menu():
+    """Only when this PC is on more than one network: a numbered choice of which one the QR code is for."""
+    m = menu["menu"]; m.delete(0, "end")
+    for n in range(max(1, len(ips))):
+        lab = f"NETWORK {n + 1}"; m.add_command(label=lab, command=lambda l=lab: (net.set(l), pick_net(l)))
+    if len(ips) > 1: menu.pack(fill="x", side="bottom", pady=4, before=qr)
+    else: menu.pack_forget()
+
 def refresh_ips():
-    """The network can change after start (Wi-Fi coming up late, a new network): keep the address list, and the code, current."""
+    """The network can change after start (Wi-Fi coming up late, a new network): keep the code current."""
     global ips
     new = compute_ips()
     if new == ips: return
-    ips = new; m = menu["menu"]; m.delete(0, "end")
-    for i in (new or ["no network"]): m.add_command(label=i, command=lambda v=i: ip.set(v))
-    if ip.get() not in new: ip.set(new[0] if new else "")
+    ips = new
+    if ip.get() not in new: ip.set(new[0] if new else ""); net.set("NETWORK 1")
+    rebuild_menu()
+rebuild_menu()
 
 @functools.lru_cache(maxsize=8)
 def qr_matrix(url): return segno.make(url, error="m").matrix
@@ -359,8 +374,10 @@ def qr_matrix(url): return segno.make(url, error="m").matrix
 def draw_qr(*_):
     qr.delete("all")
     W, H = qr.winfo_width(), qr.winfo_height(); size = min(W, H)
-    if not ip.get() or size < 40: return
-    m = qr_matrix(f"pixelpad://{ip.get()}:{PORT}"); n = len(m)
+    if not ip.get():
+        qr.create_text(W // 2, H // 2, text="NO NETWORK", fill=INK, font=FB); return
+    if size < 40: return
+    m = qr_matrix(f"pixelpad://{ip.get()}:{PORT}?name={quote(pc_name.get().strip()[:20] or 'MY PC')}"); n = len(m)
     cell = max(2, size // (n + 8)); ox, oy = (W - n * cell) // 2, (H - n * cell) // 2
     qr.create_rectangle(ox - 4 * cell, oy - 4 * cell, ox + (n + 4) * cell, oy + (n + 4) * cell, fill="white", outline="")  # quiet zone
     for y, r in enumerate(m):
@@ -370,7 +387,7 @@ _qr_job = [None]
 def draw_qr_soon(*_):
     if _qr_job[0]: root.after_cancel(_qr_job[0])
     _qr_job[0] = root.after(80, draw_qr)   # not on every pixel of a resize
-ip.trace_add("write", draw_qr); qr.bind("<Configure>", draw_qr_soon)
+ip.trace_add("write", draw_qr); pc_name.trace_add("write", draw_qr_soon); qr.bind("<Configure>", draw_qr_soon)
 
 # ---------- settings page (exact numbers, speed, log) ----------
 st = window("settings", "SETTINGS", BABY, "gear")
@@ -382,6 +399,8 @@ g1 = label(grid, text=" RELATIVE PEN SPEED"); pic(g1, "cursor"); g1.grid(row=1, 
 tk.Entry(grid, textvariable=speed, width=24, font=F, relief="solid").grid(row=1, column=1, padx=8)
 g2 = label(grid, text=" PORT (USB TCP / WI-FI UDP)"); pic(g2, ("usb", "wifi")); g2.grid(row=2, column=0, sticky="w", pady=2)
 label(grid, text=str(PORT)).grid(row=2, column=1, sticky="w", padx=8)
+g3 = label(grid, text=" THIS PC'S NAME (SHOWN ON THE TABLET)"); pic(g3, "present"); g3.grid(row=3, column=0, sticky="w", pady=2)
+tk.Entry(grid, textvariable=pc_name, width=24, font=F, relief="solid").grid(row=3, column=1, padx=8)
 
 def apply():
     try:
@@ -391,6 +410,7 @@ def apply():
         sp = float(speed.get())
         if not 0 < sp < 100: raise ValueError
         srv.speed = sp
+        pc_name.set(pc_name.get().strip()[:20] or "MY PC")
         save(); draw_map(); update_overlay(); log("applied")
     except ValueError:
         log("could not read those values")

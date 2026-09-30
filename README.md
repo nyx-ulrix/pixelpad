@@ -31,7 +31,7 @@ adb install app/build/outputs/apk/debug/app-debug.apk
 ## Connect
 
 Open PixelPad Desk, then open the app on the tablet. If no PC answers, the QR scanner opens by itself.
-- **Wi-Fi:** scan the QR code shown in PixelPad Desk (or type the address in **Settings > Connection**).
+- **Wi-Fi:** scan the QR code shown in PixelPad Desk and name the PC (PixelPad Desk suggests the name you set in its Settings). The tablet keeps every PC you have paired under the name you picked, and you switch between them in **Settings > Connection**. Addresses are never shown on either side; if you can't scan, **Add a PC by its address** takes it once and then hides it.
 - **USB:** plug in with USB debugging on and choose the cable in **Settings > Connection**. PixelPad Desk sets the link up by itself (it needs `adb`, from the Android platform tools).
 - **Bluetooth:** turn on Bluetooth tethering on the tablet, connect to it from the PC, then scan the QR code.
 - PixelPad Desk uses the first free port from 7777 up, and the QR code carries it.
@@ -41,7 +41,7 @@ Open PixelPad Desk, then open the app on the tablet. If no PC answers, the QR sc
 
 - **Trackpad:** pen or finger to move, tap to click, two-finger tap to right-click. Movement is sent raw, so Windows' pointer speed applies. Extra fingers go to Windows as touch.
 - **Tablet:** the pen reaches the **whole PC screen**. Choose which part of the tablet the pen uses in **Settings > Tablet**. Pressure curve, tilt, hover range, smoothing, rotation and flip are there too.
-- **Controller:** PlayStation, Xbox and fighting-pad templates (all appear as a DualShock 4). Move and resize any control. Up to four tablets give four controllers.
+- **Controller:** PlayStation, Xbox and fighting-pad templates (all appear as a DualShock 4). Button sizes follow the screen, so the same layout suits a phone and a tablet. Move and resize any control. Up to four tablets give four controllers.
 - **Present:** a clicker with previous/next and a pointer area. The volume keys turn slides.
 - **Lock:** on any screen, double-tap the lock icon (top left). The screen goes dark and minimal, the top bar stops responding, and you keep the pen, your tablet buttons, the controller or the prev/next buttons.
 - **Exit** is the power button at the top left: tap it twice. The app pins itself to the screen so Android's own swipes can't pull you out; Android asks about this the first time, and Settings > App turns it off.

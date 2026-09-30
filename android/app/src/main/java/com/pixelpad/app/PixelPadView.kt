@@ -20,6 +20,7 @@ import kotlin.math.max
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sin
+import kotlin.math.sqrt
 
 private const val TRACKPAD = 0
 private const val TABLET = 1
@@ -180,14 +181,14 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
     private fun computeFit() {
         if (width == 0) return
         val w = width.toFloat(); val h = padH(); val gap = 4 * dp; var k = 1f
-        val v = vis
+        val v = vis; val basis = ctlBasis()
         for (i in v.indices) {
-            val a = v[i]; val ra = a.fr * h
+            val a = v[i]; val ra = a.fr * basis
             k = minOf(k, (minOf(a.fx * w, w - a.fx * w, a.fy * h, h - a.fy * h) - gap) / ra)
             k = minOf(k, (hypot(a.fx * w - w / 2, a.fy * h - (h - 28 * dp)) - 96 * dp - gap) / ra) // EDIT + template buttons
             for (j in i + 1 until v.size) {
                 val b = v[j]
-                k = minOf(k, (hypot((a.fx - b.fx) * w, (a.fy - b.fy) * h) - gap) / (ra + b.fr * h))
+                k = minOf(k, (hypot((a.fx - b.fx) * w, (a.fy - b.fy) * h) - gap) / (ra + b.fr * basis))
             }
         }
         fitK = k.coerceIn(0.2f, 1f)
@@ -218,7 +219,7 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
     private fun saveKeys() { keepKeysInside(); Cfg.saveKeys() }
 
     /** Freezes the computed sizes into the layout once the user starts customising it. */
-    private fun bake() { if (autoFit) { ctls.forEach { it.fr *= fitK }; autoFit = false } }
+    private fun bake() { if (autoFit) { val s = fitK * ctlBasis() / padH(); ctls.forEach { it.fr *= s }; autoFit = false } }   // keep exactly the size on screen
 
     private fun saveLayout() { bake(); keepInside(); saveNow() }
     private fun saveNow() = prefs.edit().putString(layoutKey(), ctls.joinToString(";") { "${it.id}:${it.fx}:${it.fy}:${it.fr}" }).apply()
@@ -854,7 +855,9 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
     private fun padH() = height - barH
     private fun cx(c: Ctl) = c.fx * width
     private fun cy(c: Ctl) = barH + c.fy * padH()
-    private fun cr(c: Ctl) = c.fr * padH() * (if (autoFit) fitK else 1f)
+    /** Default sizes come from the screen as a whole (the geometric mean of the pad's width and height), so the same layout suits a phone and a tablet. */
+    private fun ctlBasis() = sqrt(width * padH())
+    private fun cr(c: Ctl) = if (autoFit) c.fr * ctlBasis() * fitK else c.fr * padH()
 
     private fun ctlAt(x: Float, y: Float, sticks: Boolean): Ctl? {
         var best: Ctl? = null; var bd = 1.44f   // 1.2 squared: a little slack around each control

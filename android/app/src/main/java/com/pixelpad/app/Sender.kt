@@ -138,7 +138,7 @@ class Sender(private val usbPort: Int = 7777) {
                 val c = connected(); if (c && !wasConnected) { syncRing(); syncSmooth() }; wasConnected = c
                 val now = System.nanoTime(); val n = sent.get()
                 rate = ((n - lastSent) * 1e9 / (now - lastAt)).toInt(); lastSent = n; lastAt = now
-                if (++beat % 4 == 0) Log.d("PixelPad", "link ${if (wifi) "udp $host:$port" else "usb tcp 127.0.0.1:$usbPort"} connected=$c sent=$n rtt=${lastRttUs}us queue=${q.size} error='$lastError'")
+                if (++beat % 4 == 0) Log.d("PixelPad", "link ${if (wifi) "udp" else "usb tcp"} connected=$c sent=$n rtt=${lastRttUs}us queue=${q.size} error='$lastError'")
                 put(ByteBuffer.allocate(16).order(ByteOrder.LITTLE_ENDIAN).put(PING.toByte()).put(0).put(0).putInt(0).putInt(lastRttUs))
                 if (padW > 0) put(ByteBuffer.allocate(16).order(ByteOrder.LITTLE_ENDIAN).put(HELLO.toByte()).put(0).put(0).putInt(padW).putInt(padH))
             }

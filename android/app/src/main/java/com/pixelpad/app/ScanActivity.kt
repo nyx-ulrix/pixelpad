@@ -2,6 +2,7 @@ package com.pixelpad.app
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Canvas
@@ -18,6 +19,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -159,10 +161,31 @@ class ScanActivity : Activity() {
     private fun handleCode(text: String) {
         if (waiting) return
         if (!text.startsWith("pixelpad://")) { say("THAT QR CODE IS NOT FROM PIXELPAD DESK", true); return }
-        val addr = text.removePrefix("pixelpad://"); val ip = addr.substringBefore(":")
-        Cfg.host = ip; Cfg.port = addr.substringAfter(":", "7777").toIntOrNull() ?: 7777; Cfg.transport = "wifi"
+        // pixelpad://<address>:<port>?name=<the name chosen in PixelPad Desk>
+        val body = text.removePrefix("pixelpad://"); val addr = body.substringBefore("?")
+        val ip = addr.substringBefore(":"); val port = addr.substringAfter(":", "7777").toIntOrNull() ?: 7777
+        val qrName = runCatching { java.net.URLDecoder.decode(body.substringAfter("?name=", "").substringBefore("&"), "UTF-8") }.getOrDefault("").trim()
+        val known = Cfg.pcs.firstOrNull { it.host == ip && it.port == port }
+        if (known != null) { connectTo(known); return }          // already saved: just connect
+        waiting = true
+        val field = EditText(this).apply {
+            typeface = mono; setTextColor(INK); textSize = 14f; setSingleLine(); setText(qrName.ifEmpty { "MY PC" }.take(20)); selectAll()
+            background = shape(PAPER, dp(4)); setPadding(dp(10), dp(8), dp(10), dp(8))
+        }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(14), dp(16), dp(8)); background = shape(PAPER, dp(4))
+            addView(label("NAME THIS PC", 12f)); addView(space(6)); addView(field)
+        }
+        AlertDialog.Builder(this).setView(box)
+            .setPositiveButton("SAVE") { _, _ -> connectTo(Cfg.addPc(field.text.toString(), ip, port)) }
+            .setNegativeButton("CANCEL") { _, _ -> waiting = false }
+            .setOnCancelListener { waiting = false }.show()
+    }
+
+    private fun connectTo(pc: SavedPc) {
+        Cfg.selectPc(pc); Cfg.transport = "wifi"
         Core.applyConnection(); Core.sender.reconnect()
-        waitForPc("CONNECTING TO $ip:${Cfg.port}", "COULDN'T REACH THE PC. SAME WI-FI? ALLOW PIXELPAD DESK THROUGH WINDOWS FIREWALL, THEN SCAN AGAIN.")
+        waitForPc("CONNECTING TO ${pc.name}", "COULDN'T REACH THE PC. SAME WI-FI? ALLOW PIXELPAD DESK THROUGH WINDOWS FIREWALL, THEN SCAN AGAIN.")
     }
 
     private fun tryUsb() {

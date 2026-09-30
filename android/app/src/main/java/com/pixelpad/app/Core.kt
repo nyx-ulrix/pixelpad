@@ -18,12 +18,16 @@ class Gesture(var name: String, var pts: FloatArray, var action: String)
 /** A pen button the user recorded: its name, the button code the pen reports, and what it does (hold = active only while held). */
 class PenButton(var name: String, var bit: Int, var action: String, var hold: Boolean = false)
 
+/** A PC you have paired with. You choose its name; its address is kept so the app can reach it, but it is never shown. */
+class SavedPc(var name: String, var host: String, var port: Int)
+
 /** Everything the user can change. Values are saved as soon as they are set, and the main screen reads them live. */
 object Cfg {
     lateinit var prefs: SharedPreferences
     val keys = ArrayList<ExpressKey>()
     val gestures = ArrayList<Gesture>()
     val penButtons = ArrayList<PenButton>()
+    val pcs = ArrayList<SavedPc>()
 
     fun init(ctx: Context) {
         if (::prefs.isInitialized) return
@@ -46,7 +50,26 @@ object Cfg {
             for (i in 0 until a.length()) a.getJSONObject(i).let { penButtons.add(PenButton(it.getString("name"), it.getInt("bit"), it.getString("action"), it.optBoolean("hold"))) }
         }
         if (penButtons.isEmpty() && !prefs.getBoolean("penSeeded", false)) { resetPenButtons(); prefs.edit().putBoolean("penSeeded", true).apply() }
+        runCatching {
+            val a = JSONArray(prefs.getString("pcs", "[]"))
+            for (i in 0 until a.length()) a.getJSONObject(i).let { pcs.add(SavedPc(it.getString("name"), it.getString("host"), it.getInt("port"))) }
+        }
+        if (pcs.isEmpty() && host.isNotBlank()) { pcs.add(SavedPc("MY PC", host, port)); savePcs() }   // a PC saved before PCs had names
     }
+
+    fun savePcs() = prefs.edit().putString("pcs", JSONArray().apply { pcs.forEach { put(JSONObject().put("name", it.name).put("host", it.host).put("port", it.port)) } }.toString()).apply()
+
+    /** Saves a PC under the name you picked (or renames it if that address is already saved). */
+    fun addPc(name: String, host: String, port: Int): SavedPc {
+        val n = name.trim().take(20).ifEmpty { "MY PC" }
+        val pc = pcs.firstOrNull { it.host == host && it.port == port }?.also { it.name = n } ?: SavedPc(n, host, port).also { pcs.add(it) }
+        savePcs(); return pc
+    }
+
+    /** Makes this PC the one the app connects to. */
+    fun selectPc(pc: SavedPc) { host = pc.host; port = pc.port }
+    fun activePc(): SavedPc? = pcs.firstOrNull { it.host == host && it.port == port }
+    fun removePc(pc: SavedPc) { val wasActive = activePc() === pc; pcs.remove(pc); savePcs(); if (wasActive) { host = ""; port = 7777 } }
 
     /** A starter set, like a drawing tablet's express keys; edit or remove freely. */
     fun seedKeys() {
