@@ -1,0 +1,4 @@
+vgamepad
+segno
+pystray
+pillow

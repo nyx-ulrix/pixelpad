@@ -1,0 +1,13 @@
+graphify-out/
+android/build/
+android/app/build/
+android/.gradle/
+android/.kotlin/
+android/local.properties
+__pycache__/
+server/build/
+server/dist/
+server/build.log
+*.apk
+*.iml
+.idea/
