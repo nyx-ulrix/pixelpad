@@ -322,9 +322,10 @@ class SettingsActivity : Activity() {
             r += Check(pc != null && err != "badhost", if (pc != null) "PC SAVED: ${pc.name}" else "NO PC SAVED YET", "SCAN THE QR CODE IN PIXELPAD DESK, OR ADD A PC BY ITS ADDRESS.")
         }
         r += Check(Core.sender.paired(), if (Core.sender.paired()) "PAIRED: SIGNED AND ENCRYPTED" else "NOT PAIRED", "SCAN THE QR CODE IN PIXELPAD DESK (OR TYPE ITS PAIRING CODE) SO ONLY YOUR PC CAN TALK TO THIS APP AND NOBODY ELSE CAN CONTROL THE PC.")
+        val older = if (Core.sender.paired()) " THIS APP IS PAIRED: PIXELPAD DESK MUST BE 1.3.0 OR NEWER, AND ITS PAIRING CODE MUST BE THE ONE SCANNED HERE (AFTER NEW PAIRING CODE, SCAN AGAIN)." else ""
         val hint = when (t) {
-            "usb" -> "PIXELPAD DESK MUST BE OPEN ON THE PC. PRESS RECONNECT USB THERE, OR TRY WI-FI."
-            "wifi" -> "SAME WI-FI AS THE PC? ALLOW PIXELPAD DESK THROUGH WINDOWS FIREWALL. SCAN THE QR CODE AGAIN."
+            "usb" -> "PIXELPAD DESK MUST BE OPEN ON THE PC. PRESS RECONNECT USB THERE, OR TRY WI-FI.$older"
+            "wifi" -> "SAME WI-FI AS THE PC? ALLOW PIXELPAD DESK THROUGH WINDOWS FIREWALL. SCAN THE QR CODE AGAIN.$older"
             else -> "TURN ON BLUETOOTH TETHERING HERE. ON THE PC: BLUETOOTH, THIS DEVICE, CONNECT USING ACCESS POINT. THEN SCAN THE QR CODE."
         }
         r += Check(conn, if (conn) "PIXELPAD DESK ANSWERS · PLAYER ${Core.sender.slot}" else "PIXELPAD DESK ANSWERS" + (if (err.isNotEmpty()) " ($err)" else ""), hint)

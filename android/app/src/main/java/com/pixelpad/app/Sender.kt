@@ -121,11 +121,13 @@ class Sender(private val usbPort: Int = 7777) {
         lastRttUs = us; slot = (b[1].toInt() and 255).coerceIn(0, 4); lastError = ""; lastPong = System.nanoTime()
     }
 
-    /** A reply is a fresh answer to a ping we sent in the last few seconds (its echoed timestamp is recent). */
+    private val stamps = java.util.ArrayDeque<Int>()   // the timestamps of the pings we sent last
+
+    /** A reply is a fresh answer to a ping we really sent in the last few seconds (it echoes one of our recent timestamps). */
     private fun freshPing(b: ByteArray): Boolean {
         if (b[0].toInt() != PING) return false
-        val age = nowUs() - ByteBuffer.wrap(b).order(ByteOrder.LITTLE_ENDIAN).getInt(3)
-        return age in 0..5_000_000
+        val echo = ByteBuffer.wrap(b).order(ByteOrder.LITTLE_ENDIAN).getInt(3)
+        return synchronized(stamps) { echo in stamps } && nowUs() - echo in 0..5_000_000
     }
 
     /** The packet inside what the PC sent, or null if it can't be trusted (not sealed when we are paired, forged, replayed, a stray 16 bytes). */
@@ -179,7 +181,10 @@ class Sender(private val usbPort: Int = 7777) {
                 if (System.nanoTime() < retryAt && p[0].toInt() != PING) continue   // recently failed: don't hammer a PC that isn't there
                 try {
                     if (dirty) { dirty = false; tcp?.close(); tcp = null; udp?.close(); udp = null; addr = null; lastPong = 0 }
-                    if (p[0].toInt() == PING) ByteBuffer.wrap(p).order(ByteOrder.LITTLE_ENDIAN).putInt(3, nowUs()) // stamp at send time
+                    if (p[0].toInt() == PING) {   // stamp at send time, and remember the stamp: only a reply echoing one of ours is believed
+                        val us = nowUs(); ByteBuffer.wrap(p).order(ByteOrder.LITTLE_ENDIAN).putInt(3, us)
+                        synchronized(stamps) { stamps.addLast(us); while (stamps.size > 16) stamps.removeFirst() }
+                    }
                     else if (p[0].toInt() != HELLO) sent.incrementAndGet()
                     val sl = seal
                     val unknown = sl != null && sl.nonce.all { it.toInt() == 0 }   // paired, but this PC run's nonce isn't known yet: only discovery pings can go out

@@ -17,7 +17,7 @@ log = print  # the desktop app swaps this for its own log window
 PEN_FMT, PAD_FMT, SIZE = "<BBBiiHbbB", "<BHbbbbBB7x", 16
 TRACKPAD, TABLET, CONTROLLER, PING, HELLO, KEY, CONFIG, TOUCH, REC = 0, 1, 2, 3, 4, 6, 7, 8, 9
 MAX_DEVICES = 4
-FRAME_IN, FRAME_OUT, MARK_IN, MARK_OUT = 33, 37, 0xA5, 0xA6   # sealed packets: app -> PC, PC -> app (see class Pairing)
+FRAME_IN, FRAME_OUT, MARK_IN, MARK_OUT = 48, 37, 0xA5, 0xA6   # sealed packets: app -> PC, PC -> app (see class Pairing)
 u32 = ctypes.windll.user32
 u32.SetProcessDPIAware()
 
@@ -332,28 +332,32 @@ class Pad:
 class Pairing:
     """Pairing security. The Desk shows a pairing key (QR code); with it every 16-byte packet travels in a sealed frame, so nobody else on the
     network or the USB tunnel can send input to this PC, read what is sent, or replay a recording of it.
-      app -> PC (33 bytes): 0xA5, session id (4), counter (4), packet XOR keystream (16), tag (8)
+      app -> PC (48 bytes): body = session id (4), counter (4), packet XOR keystream (16), tag (8), spread over three 16-byte rows that each start
+                            with 0xA5 (15 + 15 + 2 bytes, then zero padding), so a pre-1.3 server that cuts a TCP stream into 16-byte packets only sees
+                            "mode 165", which does nothing
       PC -> app (37 bytes): 0xA6, this run's nonce (8), counter (4), packet XOR keystream (16), tag (8)
-    The keystream and the tag are HMAC-SHA256 of the key over a label, the nonce and the counters (the tag covers the encrypted packet and is cut
-    to 8 bytes). The nonce is new every time the Desk starts, so nothing recorded earlier works; a counter per session id makes a frame usable once
+    The keystream and the tag are HMAC-SHA256 of the key over a label, the nonce, the app's session id and the counter (the tag covers the encrypted
+    packet and is cut to 8 bytes); replies are bound to the session id of the app they answer. The nonce is new every time the Desk starts, so nothing recorded earlier works; a counter per session id makes a frame usable once
     (sliding window of 64, for UDP reordering). An app learns the nonce from a reply to a "discovery" ping, sealed with the nonce 0, which is only
     ever accepted for a ping and creates nothing. The same scheme in Kotlin is android/.../Seal.kt: change them together."""
     def __init__(self, key):
         self.key, self.nonce, self.rc = bytes(key), os.urandom(8), 0
         self.sessions, self.lock = collections.OrderedDict(), threading.Lock()
+        self.bad_at = 0.0   # when a frame last failed its check (a device with another pairing code, or someone guessing)
 
     def _h(self, *parts): return hmac.new(self.key, b"".join(parts), hashlib.sha256).digest()
 
     def open(self, f):
-        """(16-byte packet, is_discovery) for a genuine, new frame from an app, else None."""
-        if len(f) != FRAME_IN or f[0] != MARK_IN: return None
-        sid, ctr, ct, tag = f[1:5], f[5:9], f[9:25], f[25:33]
+        """(16-byte packet, is_discovery, session id) for a genuine, new frame from an app, else None."""
+        if len(f) != FRAME_IN or f[0] != MARK_IN or f[16] != MARK_IN or f[32] != MARK_IN or any(f[35:]): return None
+        body = f[1:16] + f[17:32] + f[33:35]
+        sid, ctr, ct, tag = body[0:4], body[4:8], body[8:24], body[24:32]
         for nonce, disc in ((self.nonce, False), (bytes(8), True)):
-            if hmac.compare_digest(self._h(b"T", nonce, f[:1], sid, ctr, ct)[:8], tag): break
-        else: return None
+            if hmac.compare_digest(self._h(b"T", nonce, bytes([MARK_IN]), sid, ctr, ct)[:8], tag): break
+        else: self.bad_at = time.time(); return None
         pt = bytes(a ^ b for a, b in zip(ct, self._h(b"E", nonce, sid, ctr)))
-        if disc: return (pt, True) if pt[0] == PING else None   # nothing but a ping may be sealed with the nonce 0, and it changes no state
-        return (pt, False) if self._fresh(int.from_bytes(sid, "little"), int.from_bytes(ctr, "little")) else None
+        if disc: return (pt, True, sid) if pt[0] == PING else None   # nothing but a ping may be sealed with the nonce 0, and it changes no state
+        return (pt, False, sid) if self._fresh(int.from_bytes(sid, "little"), int.from_bytes(ctr, "little")) else None
 
     def _fresh(self, sid, c):
         with self.lock:
@@ -369,11 +373,11 @@ class Pairing:
             if gap >= 64 or bits >> gap & 1: return False   # too old, or already seen: a replay
             st[1] = bits | 1 << gap; return True
 
-    def seal(self, pt):
-        """A 16-byte packet for the app as a 37-byte sealed frame."""
+    def seal(self, pt, sid):
+        """A 16-byte packet for the app whose session id is sid, as a 37-byte sealed frame."""
         with self.lock: self.rc = (self.rc + 1) & 0xFFFFFFFF; rc = self.rc.to_bytes(4, "little")
-        ct = bytes(a ^ b for a, b in zip(pt, self._h(b"R", self.nonce, rc)))
-        return bytes([MARK_OUT]) + self.nonce + rc + ct + self._h(b"S", bytes([MARK_OUT]), self.nonce, rc, ct)[:8]
+        ct = bytes(a ^ b for a, b in zip(pt, self._h(b"R", self.nonce, sid, rc)))
+        return bytes([MARK_OUT]) + self.nonce + rc + ct + self._h(b"S", bytes([MARK_OUT]), self.nonce, sid, rc, ct)[:8]
 
 # ---------- plumbing ----------
 class Device:
@@ -521,20 +525,21 @@ class Server:
         aw, ah = self.area()[2:]
         out = bytearray(d); out[1] = slot; out[7:11] = struct.pack("<I", (min(aw, 65535) << 16) | min(ah, 65535)); return bytes(out)
 
-    def discover(self, d, key_, reply):
+    def discover(self, d, key_, reply, sid):
         """A discovery ping (sealed with the nonce 0): answer it so the app learns this run's nonce. Nothing is created and nothing changes."""
         dev = self.devices.get(key_)
-        reply(self.pair.seal(self._pong(d, dev.slot if dev else 0)))
+        reply(self.pair.seal(self._pong(d, dev.slot if dev else 0), sid))
 
     def refuse_plain(self):
         if time.time() - self._warned > 30:
             self._warned = time.time()
             log("a device without a pairing key tried to connect and was refused. Update PixelPad on it and scan the QR code again, or turn on ALLOW OLD APPS in Settings (not safe).")
 
-    def handle(self, d, reply, key_, transport, secure=False):
+    def handle(self, d, reply, key_, transport, sid=None):
+        """sid: the session id of a sealed frame (replies are then sealed for it), None for a plain packet."""
         dev = self.device(key_, transport)
         if not dev: return
-        dev.last_seen = time.time(); dev.reply = reply; dev.sealer = self.pair.seal if secure and self.pair else None
+        dev.last_seen = time.time(); dev.reply = reply; dev.sealer = (lambda b, s=sid: self.pair.seal(b, s)) if sid is not None and self.pair else None
         mode = d[0]
         if mode == PING:
             dev.rtt_us = struct.unpack(PEN_FMT, d)[4]
@@ -619,17 +624,19 @@ class Server:
     def udp_loop(self):
         s = self.usock
         while True:
-            try: d, addr = s.recvfrom(64)
+            try: d, addr = s.recvfrom(65536)   # room for any datagram: Windows raises an error for one bigger than the buffer, which must not end this loop
             except ConnectionResetError: continue  # Windows reports a closed phone socket this way; it is not fatal
-            except OSError: return
+            except OSError as e:
+                if s.fileno() == -1: return        # closed on purpose
+                self.last_error = str(e); time.sleep(0.05); continue
             try:
                 if len(d) == SIZE:   # a plain, unauthenticated packet: only from an old app, and only if allowed
                     if self.pair and not self.allow_legacy: self.refuse_plain(); continue
                     self.handle(d, lambda b, a=addr: s.sendto(b, a), ("udp",) + addr, "wifi")
                 elif len(d) == FRAME_IN and self.pair and (o := self.pair.open(d)):
                     key_, reply = ("udp",) + addr, lambda b, a=addr: s.sendto(b, a)
-                    if o[1]: self.discover(o[0], key_, reply)
-                    else: self.handle(o[0], reply, key_, "wifi", True)
+                    if o[1]: self.discover(o[0], key_, reply, o[2])
+                    else: self.handle(o[0], reply, key_, "wifi", o[2])
             except Exception as e: self.last_error = str(e)
 
     def tcp_loop(self):
@@ -646,12 +653,13 @@ class Server:
             while (r := c.recv(4096)):
                 buf += r
                 while buf:
-                    if buf[0] == MARK_IN and self.pair:   # a sealed frame (a plain packet never starts with this byte)
+                    if buf[0] == MARK_IN:   # a sealed frame (a plain packet never starts with this byte)
+                        if not self.pair: return   # ...and this server has no key to open it with
                         if len(buf) < FRAME_IN: break
                         f, buf = buf[:FRAME_IN], buf[FRAME_IN:]
                         if not (o := self.pair.open(f)): continue
-                        if o[1]: self.discover(o[0], key_, c.sendall)
-                        else: self.handle(o[0], c.sendall, key_, "usb", True)
+                        if o[1]: self.discover(o[0], key_, c.sendall, o[2])
+                        else: self.handle(o[0], c.sendall, key_, "usb", o[2])
                     else:
                         if self.pair and not self.allow_legacy: self.refuse_plain(); return
                         if len(buf) < SIZE: break
@@ -785,6 +793,10 @@ def diagnose(srv, port):
     else: r.append(("fail", "NOTHING RECEIVED FROM THE CONTROLLER DEVICE", "Open PixelPad on the controller device and check Settings > Connection. Over Wi-Fi/Bluetooth: scan the QR code, and allow PixelPad Desk through Windows Firewall."))
     if srv.pair and srv._warned and time.time() - srv._warned < 120:
         r.append(("warn", "A DEVICE WITHOUT A PAIRING KEY WAS REFUSED", "Update PixelPad on it and scan the QR code again, or turn on ALLOW OLD APPS in Settings (not safe)."))
+    if srv.pair and time.time() - srv.pair.bad_at < 60:
+        r.append(("warn", "A DEVICE WITH A DIFFERENT PAIRING CODE IS TRYING TO CONNECT", "Scan this PC's QR code again on that device (or type the pairing code under it). After NEW PAIRING CODE every device has to."))
+    if srv.pair and srv.allow_legacy:
+        r.append(("warn", "OLD APPS ARE ALLOWED (NOT SAFE)", "Anyone on the network and any website you open can control this PC while this is on. Turn off ALLOW OLD APPS in Settings once every device is updated."))
     if srv.last_error: r.append(("warn", "LAST ERROR: " + srv.last_error.upper(), ""))
     how = "WI-FI" if wifi_only else "USB" if devs and all(d.transport == "usb" for d in devs) else "USB + WI-FI"
     r.insert(0, ("ok", f"CONNECTED: {len(devs)} DEVICE(S) OVER {how}", "") if devs else ("warn", "WAITING FOR A CONTROLLER DEVICE", ""))

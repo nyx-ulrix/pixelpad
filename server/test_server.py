@@ -200,19 +200,21 @@ class AppSeal:
         c = (self.ctr if ctr is None else ctr).to_bytes(4, "little")
         if ctr is None: self.ctr += 1
         ct = bytes(a ^ b for a, b in zip(pt, self.h(b"E", n, self.sid, c)))
-        return b"\xA5" + self.sid + c + ct + self.h(b"T", n, b"\xA5", self.sid, c, ct)[:8]
+        body = self.sid + c + ct + self.h(b"T", n, b"\xA5", self.sid, c, ct)[:8]
+        return b"\xA5" + body[:15] + b"\xA5" + body[15:30] + b"\xA5" + body[30:] + bytes(13)
     def open(self, f):
         assert len(f) == 37 and f[0] == 0xA6, f
         n, c, ct, tag = f[1:9], f[9:13], f[13:29], f[29:37]
-        assert _hm.compare_digest(self.h(b"S", b"\xA6", n, c, ct)[:8], tag), "reply tag"
-        return n, bytes(a ^ b for a, b in zip(ct, self.h(b"R", n, c)))
+        assert _hm.compare_digest(self.h(b"S", b"\xA6", n, self.sid, c, ct)[:8], tag), "reply tag"
+        return n, bytes(a ^ b for a, b in zip(ct, self.h(b"R", n, self.sid, c)))
 
 class FakeUdp:
     """Feeds datagrams to Server.udp_loop and records what it sends back."""
-    def __init__(self, items): self.items, self.sent = list(items), []
+    def __init__(self, items): self.items, self.sent, self.closed = list(items), [], False
     def recvfrom(self, n):
-        if not self.items: raise OSError("done")
+        if not self.items: self.closed = True; raise OSError("done")   # the loop ends when the socket is closed
         return self.items.pop(0)
+    def fileno(self): return -1 if self.closed else 3
     def sendto(self, b, a): self.sent.append((b, a))
 
 def run_udp(items):
@@ -259,6 +261,20 @@ class FakeTcp:
 for k in list(srv.devices): srv.drop(k)
 t = FakeTcp(A.seal(ping) + A.seal(pkt(6, 0x5A, 1, 0))[:10]); srv.serve_tcp(t, ("tcp", "127.0.0.1", 5)); assert len(t.out) == 37 and t.closed, len(t.out)
 t = FakeTcp(ping); srv.serve_tcp(t, ("tcp", "127.0.0.1", 6)); assert t.out == b"" and t.closed and not srv.devices
+# a server without a key closes on a sealed frame instead of reading it as 16-byte packets; and an old server only ever sees "mode 165" in it
+fr = A.seal(pkt(6, 0x5A, 1, 0)); assert len(fr) == 48 and fr[0] == fr[16] == fr[32] == 0xA5 and all(fr[i] == 0xA5 for i in (0, 16, 32))
+_p = srv.pair; srv.pair = None; t = FakeTcp(fr); srv.serve_tcp(t, ("tcp", "127.0.0.1", 7)); assert t.out == b"" and t.closed and not srv.devices; srv.pair = _p
+# one oversized datagram doesn't end the receive loop (it used to, on Windows), and an old-style 16-byte chunking of a frame injects nothing
+class BigUdp(FakeUdp):
+    def recvfrom(self, n):
+        if self.items and len(self.items[0][0]) > n: self.items.pop(0); raise OSError(10040, "message too long")
+        return super().recvfrom(n)
+out = (setattr(srv, "usock", BigUdp([(bytes(100), ADDR), (A.seal(ping), ADDR)])), srv.udp_loop())
+assert [d.slot for d in srv.devices.values()] == [1], "the loop survived a 100-byte datagram and served the next one"
+# a reply is bound to the app that asked: another session id can't open it
+r_ = AppSeal(sid=b"\x09\x09\x09\x09"); r_.nonce = A.nonce
+try: r_.open(run_udp([(A.seal(ping), ADDR)])[0][0]); assert False, "reply opened with the wrong session"
+except AssertionError as e: assert "reply tag" in str(e)
 # an old app (plain packets) works again when old apps are allowed
 srv.allow_legacy = True; assert len(run_udp([(ping, ADDR)])) == 1
 # the sealed key and a spoofed device cannot take player slots: five unauthenticated sources create nothing

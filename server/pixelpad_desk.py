@@ -63,8 +63,9 @@ cfg = load()
 if not isinstance(cfg, dict): cfg = {}
 def num(key, default, lo, hi, f=int):
     """A number from the settings file, kept inside lo..hi; the default if it is missing or isn't a number."""
-    try: return min(hi, max(lo, f(cfg.get(key, default))))
+    try: v = f(cfg.get(key, default))
     except (TypeError, ValueError, OverflowError): return default
+    return default if isinstance(v, float) and not math.isfinite(v) else min(hi, max(lo, v))
 _theme = num("theme", -1, -1, len(THEMES) - 1)
 theme = [_theme if _theme >= 0 else None]   # the Desk's own background colour; until you pick one it keeps the classic blue-to-pink
 if theme[0] is not None: TOP, BOTTOM = THEMES[theme[0]][1], THEMES[theme[0]][2]
@@ -74,7 +75,7 @@ def save():
         os.makedirs(os.path.dirname(CFG), exist_ok=True)
         with open(CFG, "w") as f:
             json.dump({"open": {k: w["visible"] for k, w in reg.items()}, "speed": srv.speed, "area_mode": srv.area_mode,
-                       "custom": list(srv.custom), "screen": screen_idx[0], "highlight": hl["on"], "hl_size": hl["size"], "hl_style": hl["style"], "hl_color": hl["color"], "hl_thick": hl["thick"], "pair_key": pair_key[0], "allow_legacy": srv.allow_legacy, "theme": theme[0] if theme[0] is not None else -1, "pc_name": pc_name.get().strip()[:20] or "MY PC"}, f)
+                       "custom": list(srv.custom), "screen": screen_idx[0], "highlight": hl["on"], "hl_size": hl["size"], "hl_style": hl["style"], "hl_color": hl["color"], "hl_thick": hl["thick"], **_key_fields(), "allow_legacy": srv.allow_legacy, "legacy_until": legacy_until[0], "theme": theme[0] if theme[0] is not None else -1, "pc_name": pc_name.get().strip()[:20] or "MY PC"}, f)
     except OSError: pass
 
 def tip(w, text):
@@ -126,9 +127,35 @@ if isinstance(_c, list) and len(_c) == 4 and all(isinstance(v, (int, float)) and
 overlay_on = False
 srv.allow_record = False   # never remembered: recording a shortcut listens to this keyboard, so it is switched on by hand each time
 # the pairing key (see Pairing in pixelpad_server.py): made on first run, kept in the settings; the QR code carries it. Old apps without one are refused unless allowed.
-_key = str(cfg.get("pair_key", ""))
-pair_key = [_key if re.fullmatch("[0-9a-f]{32}", _key) else secrets.token_hex(16)]
-srv.pair, srv.allow_legacy = ns.Pairing(bytes.fromhex(pair_key[0])), bool(cfg.get("allow_legacy", False))
+def _dpapi(data, protect):
+    """Windows data protection: what it wraps can only be unwrapped by this Windows user on this PC. None if it fails."""
+    class BLOB(ctypes.Structure): _fields_ = [("cb", ctypes.c_uint32), ("pb", ctypes.c_void_p)]
+    try:
+        buf = ctypes.create_string_buffer(data, len(data)); inb, out = BLOB(len(data), ctypes.cast(buf, ctypes.c_void_p)), BLOB()
+        fn = ctypes.windll.crypt32.CryptProtectData if protect else ctypes.windll.crypt32.CryptUnprotectData
+        if not fn(ctypes.byref(inb), None, None, None, None, 0, ctypes.byref(out)): return None
+        try: return ctypes.string_at(out.pb, out.cb)
+        finally: ctypes.windll.kernel32.LocalFree(ctypes.c_void_p(out.pb))
+    except Exception: return None
+
+def _load_key():
+    """The pairing key from the settings file (wrapped with Windows data protection; an older plain one is accepted and wrapped on the next save)."""
+    import base64
+    try:
+        k = _dpapi(base64.b64decode(str(cfg.get("pair_key_dpapi", ""))), False)
+        if k and re.fullmatch("[0-9a-f]{32}", k.decode("ascii", "replace")): return k.decode("ascii")
+    except Exception: pass
+    k = str(cfg.get("pair_key", ""))
+    return k if re.fullmatch("[0-9a-f]{32}", k) else secrets.token_hex(16)
+
+def _key_fields():
+    import base64
+    blob = _dpapi(pair_key[0].encode("ascii"), True)
+    return {"pair_key_dpapi": base64.b64encode(blob).decode("ascii")} if blob else {"pair_key": pair_key[0]}   # the plain key only if wrapping isn't possible
+pair_key = [_load_key()]
+# old apps are only ever allowed for a day at a time: the switch turns itself off (see tick)
+legacy_until = [float(cfg.get("legacy_until", 0)) if isinstance(cfg.get("legacy_until"), (int, float)) and cfg.get("allow_legacy") is True else 0.0]
+srv.pair, srv.allow_legacy = ns.Pairing(bytes.fromhex(pair_key[0])), legacy_until[0] > time.time()
 pc_name = tk.StringVar(value=str(cfg.get("pc_name", "MY PC")).strip()[:20] or "MY PC")   # the name the tablet saves this PC under (you choose it)
 hl = srv.ring   # shared with the tablet, which can change it too
 hl.update(on=bool(cfg.get("highlight", True)), size=num("hl_size", 90, 50, 220), style=num("hl_style", 0, 0, 2),
@@ -156,7 +183,7 @@ def window(key, title, color, icon):
         x.bind("<Button-1>", lambda e, k=key: set_visible(k, False))
     tk.Frame(win, bg=INK, height=3).pack(fill="x")
     body = tk.Frame(win, bg=PAPER); body.pack(fill="both", expand=True, padx=int(10 * SC), pady=int(6 * SC))
-    reg[key] = {"items": (s_item, w_item), "visible": cfg.get("open", {}).get(key, True), "color": color, "title": title}
+    reg[key] = {"items": (s_item, w_item), "visible": (cfg.get("open") if isinstance(cfg.get("open"), dict) else {}).get(key, True), "color": color, "title": title}
     order.append(key)
     return body
 
@@ -591,8 +618,9 @@ hint(st, "CLOSING THE WINDOW KEEPS PIXELPAD RUNNING IN THE TRAY (BOTTOM RIGHT OF
 # -- pairing --
 prow = tk.Frame(st, bg=PAPER); prow.pack(fill="x", pady=(0, 4))
 def toggle_legacy():
-    srv.allow_legacy = not srv.allow_legacy; flag(legacy_pill, "lock", srv.allow_legacy); save()
-legacy_pill = pill(prow, "ALLOW OLD APPS WITHOUT PAIRING (NOT SAFE)", toggle_legacy, PAPER, "lock"); flag(legacy_pill, "lock", srv.allow_legacy); legacy_pill.pack(side="left", padx=(0, 6))
+    srv.allow_legacy = not srv.allow_legacy; legacy_until[0] = time.time() + 24 * 3600 if srv.allow_legacy else 0.0
+    flag(legacy_pill, "lock", srv.allow_legacy); save()
+legacy_pill = pill(prow, "ALLOW OLD APPS FOR 24 HOURS (NOT SAFE)", toggle_legacy, PAPER, "lock"); flag(legacy_pill, "lock", srv.allow_legacy); legacy_pill.pack(side="left", padx=(0, 6))
 def new_code():
     from tkinter import messagebox
     if not messagebox.askyesno("PixelPad Desk", "Make a new pairing code? Every device paired with the old one has to scan the QR code again."): return
@@ -600,7 +628,7 @@ def new_code():
     for k in list(srv.devices): srv.drop(k)
     show_code(); draw_qr(); save(); log("new pairing code made: devices must scan the QR code again")
 pill(prow, "NEW PAIRING CODE", new_code, LILAC, "retry").pack(side="left")
-hint(st, "EVERY PACKET IS SIGNED AND ENCRYPTED WITH THE PAIRING CODE IN THE QR CODE, SO ONLY DEVICES THAT SCANNED IT CAN CONTROL THIS PC. SHARE THE CODE ONLY WITH YOUR OWN DEVICES. OLD APPS (BEFORE 1.3.0) HAVE NO CODE.", wrap=700).pack(fill="x", pady=(0, 8))
+hint(st, "EVERY PACKET IS SIGNED AND ENCRYPTED WITH THE PAIRING CODE IN THE QR CODE, SO ONLY DEVICES THAT SCANNED IT CAN CONTROL THIS PC. TREAT THE CODE LIKE A PASSWORD: DON'T SHARE OR PHOTOGRAPH IT. OLD APPS (BEFORE 1.3.0) HAVE NO CODE: WHILE THEY ARE ALLOWED, ANYONE ON THE NETWORK AND ANY WEBSITE YOU OPEN CAN CONTROL THIS PC, SO IT SWITCHES ITSELF OFF AFTER 24 HOURS.", wrap=700).pack(fill="x", pady=(0, 8))
 # -- version and updates (the logic is with the update code below) --
 label(st, text="VERSION AND UPDATES").pack(fill="x")
 vcard = tk.Frame(st, bg=PAPER); vcard.pack(fill="x", pady=(2, 8))
@@ -670,6 +698,8 @@ def _tick():
     update_overlay()
 
 def tick():
+    if srv.allow_legacy and legacy_until[0] and time.time() > legacy_until[0]:   # old apps were only allowed for a day
+        srv.allow_legacy = False; legacy_until[0] = 0.0; flag(legacy_pill, "lock", False); save(); log("allowing old apps ended: they are refused again")
     try: _tick()
     except Exception as ex: log("screen refresh:", ex)
     finally: root.after(500, tick)
@@ -751,8 +781,6 @@ def do_update(exe, sums, show, fail):
             try: subprocess.Popen([me, "--updated"] + (["--tray"] if "--tray" in sys.argv else []), cwd=folder, close_fds=True, creationflags=0x00000008, env=env,
                                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)   # the new copy waits for this one to leave
             except OSError:
-                try: os.replace(me, new); os.replace(old, me)
-                except OSError: pass
                 root.after(0, fail, "The update was installed but PixelPad Desk could not start it. Open PixelPad Desk again."); return
             root.after(0, show, -1, -1); root.after(0, quit_app)
         finally: shutil.rmtree(tmp, ignore_errors=True)
