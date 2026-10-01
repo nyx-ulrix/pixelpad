@@ -1063,6 +1063,17 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
         icon(c, ic, r.left + 18 * dp, r.centerY(), 7 * dp, ink)
         text(c, latencyMsg, r.left + 32 * dp, r.centerY() + 4 * dp, 11f, Paint.Align.LEFT, ink, width * .7f)
         if (!dim && !st.connected) uiBtns.add(r to { host.openSettings(0) })   // not connected: tap this to set up
+        // which player this device is, to the right of the latency, in the theme colour (the colour PixelPad Desk shows for it)
+        val slot = tx.slot
+        if (st.connected && slot in 1..4) {
+            val tag = "P$slot"; p.textSize = 11 * dp; p.style = Paint.Style.FILL
+            val pr = RectF(r.right + 6 * dp, y, r.right + 6 * dp + p.measureText(tag) + 24 * dp, y + h)
+            if (!dim) {
+                p.color = Themes.current().accent; c.drawRoundRect(pr, h / 2, h / 2, p)
+                p.style = Paint.Style.STROKE; p.strokeWidth = 2 * dp; p.color = INK; c.drawRoundRect(pr, h / 2, h / 2, p)
+            }
+            text(c, tag, pr.centerX(), pr.centerY() + 4 * dp, 11f, Paint.Align.CENTER, if (dim) 0xFF4F6FAF.toInt() else PAPER)
+        }
     }
 
     /**
