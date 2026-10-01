@@ -1067,6 +1067,15 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
         c.drawText(t, x, y, p)
     }
 
+    /** A button's label, scaled with the button: its width is about 65% of the button's width, so short labels grow and long ones shrink with the button. */
+    private fun fitLabel(c: Canvas, label: String, x: Float, y: Float, r: Float, color: Int) {
+        val t = label.uppercase(); if (t.isEmpty()) return
+        p.style = Paint.Style.FILL; p.color = color; p.textAlign = Paint.Align.CENTER; p.textSize = 100f
+        val w100 = p.measureText(t).coerceAtLeast(1f); val d = 2 * r
+        p.textSize = (100f * d * .65f / w100).coerceAtMost(d * .9f)   // 65% of the width, but a lone narrow glyph is kept within the button's height
+        c.drawText(t, x, y + p.textSize * .35f, p)
+    }
+
     private fun win(c: Canvas, r: RectF, title: String, tc: Int) {
         fillR(c, RectF(r.left + 5 * dp, r.top + 5 * dp, r.right + 5 * dp, r.bottom + 5 * dp), INK) // hard offset shadow
         fillR(c, r, PAPER); outline(c, r, 3 * dp)
@@ -1273,8 +1282,8 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
                 p.style = Paint.Style.FILL; p.color = if (dark) (if (on) dimmed(HOT, .7f) else DARK_FACE) else if (on) HOT else k.color; c.drawCircle(x, y, r, p)
                 p.style = Paint.Style.STROKE; p.strokeWidth = 3 * dp; p.color = edge; c.drawCircle(x, y, r, p)
                 val tc = if (dark) edge else if (on) PAPER else INK
-                if (k.icon != null) icon(c, k.icon, x, y, r * .5f, tc)
-                else text(c, k.label, x, y + r * .25f, r / dp * .7f, Paint.Align.CENTER, tc, r * 1.75f)
+                if (k.icon != null) icon(c, k.icon, x, y, r * .65f, tc)   // an icon covers about 65% of the button
+                else fitLabel(c, k.label, x, y, r, tc)
             }
             if (!dark && editing && selected === k) {
                 p.style = Paint.Style.STROKE; p.strokeWidth = 4 * dp; p.color = HOT; c.drawCircle(x, y, r + 6 * dp, p)

@@ -322,7 +322,8 @@ class Pad:
             (p.press_special_button if b >> bit & 1 else p.release_special_button)(getattr(vg.DS4_SPECIAL_BUTTONS, "DS4_SPECIAL_BUTTON_" + n))
         d = DPAD.get(tuple(b >> k & 1 for k in (12, 13, 14, 15)), "NONE")
         p.directional_pad(getattr(vg.DS4_DPAD_DIRECTIONS, "DS4_BUTTON_DPAD_" + d))
-        p.left_joystick_float(lx / 127, ly / 127); p.right_joystick_float(rx / 127, ry / 127)
+        # the packet has up as positive; the DualShock 4 axis has up as negative (its raw 0 is up), so up/down are flipped here
+        p.left_joystick_float(lx / 127, -ly / 127); p.right_joystick_float(rx / 127, -ry / 127)
         p.left_trigger(lt); p.right_trigger(rt)
         p.update()
 
