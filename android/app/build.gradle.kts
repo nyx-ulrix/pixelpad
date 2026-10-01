@@ -11,8 +11,8 @@ android {
         applicationId = "com.pixelpad.app"
         minSdk = 24
         targetSdk = 35
-        versionCode = 8
-        versionName = "1.2.2"
+        versionCode = 9
+        versionName = "1.2.3"
     }
     buildTypes {
         release {
