@@ -107,6 +107,8 @@ send(pkt(7, 2, 0, 150), "r"); send(pkt(7, 3, 0, 1), "r"); send(pkt(7, 4, 0, 9), 
 assert srv.ring["size"] == 150 and srv.ring["style"] == 1 and srv.ring["color"] == 3 and srv.ring["on"] is False, srv.ring
 send(pkt(7, 2, 0, 5000), "r"); assert srv.ring["size"] == 300
 srv.drop("r")
+send(pkt(7, 7, 0, 2), "c"); assert srv.devices["c"].colour == 2 and srv.devices["c"].colour is not None; send(pkt(7, 7, 0, 8), "c"); assert srv.devices["c"].colour == 2   # 8 wraps to 2
+srv.drop("c")
 
 # no app-made shortcuts on the trackpad: scroll / zoom / gesture actions are gone, plain clicks remain
 mouse_calls.clear(); keys.clear()

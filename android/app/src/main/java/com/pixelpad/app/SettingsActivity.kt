@@ -42,7 +42,7 @@ private val INK = 0xFF2F6FE0.toInt()
 private val PAPER = 0xFFF7FBFF.toInt()
 private val LILAC = 0xFFD9C8FF.toInt()
 private val PINK = 0xFFFFB8E6.toInt()
-private val HOT = 0xFFE84FB0.toInt()
+private val HOT get() = Themes.current().accent   // the theme colour
 private val GREEN = 0xFFB8E986.toInt()
 private val BABY = 0xFFBFE3FA.toInt()
 private val PEACH = 0xFFFFD9A8.toInt()
@@ -135,10 +135,10 @@ class SettingsActivity : Activity() {
     }
 
     /** One row of choices; the selected one is highlighted. */
-    private fun chooser(name: String, opts: List<Pair<String, String>>, get: () -> String, set: (String) -> Unit, icons: Map<String, String> = emptyMap()): View {
+    private fun chooser(name: String, opts: List<Pair<String, String>>, get: () -> String, set: (String) -> Unit, icons: Map<String, String> = emptyMap(), fills: Map<String, Int> = emptyMap()): View {
         val pills = ArrayList<Pair<TextView, String>>()
         fun paint() = pills.forEach { (t, v) ->
-            val on = get() == v; t.background = shape(if (on) HOT else PAPER, dp(24)); t.setTextColor(if (on) PAPER else INK)
+            val on = get() == v; t.background = shape(if (on) HOT else (fills[v] ?: PAPER), dp(24)); t.setTextColor(if (on) PAPER else INK)
             icons[v]?.let { t.compoundDrawablePadding = dp(8); t.setCompoundDrawablesWithIntrinsicBounds(iconD(it, if (on) PAPER else INK), null, null, null) }
         }
         val col = vbox(); col.addView(label(name, 12f), lp(bottom = 4))
@@ -157,14 +157,19 @@ class SettingsActivity : Activity() {
     }
 
     // ---------- shell ----------
+    private lateinit var rootView: LinearLayout
+
+    /** The page background: your picked colour, or the one for your player number. */
+    private fun applyTheme() { val t = Themes.current(); rootView.background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(t.top, t.bottom)) }
+
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
         Cfg.init(this)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setPadding(dp(14), dp(10), dp(14), dp(6))
-            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(SKY, BLUSH))
         }
+        rootView = root; applyTheme()
         val top = hbox(label("", 20f).apply { setCompoundDrawablesWithIntrinsicBounds(iconD("gear", INK, 32), null, null, null) }, pill("", PINK, icon = "x") { finish() }, weights = false)
         (top.getChildAt(0).layoutParams as LinearLayout.LayoutParams).apply { weight = 1f; width = 0 }
         root.addView(top, lp(bottom = 8))
@@ -511,7 +516,7 @@ class SettingsActivity : Activity() {
 
     private fun controller() {
         content.addView(card("TEMPLATE", GREEN,
-            chooser("LAYOUT", listOf("PLAYSTATION" to "ps", "XBOX" to "xbox", "FIGHTING PAD" to "fight"), { Cfg.tpl }, { Cfg.tpl = it }),
+            chooser("LAYOUT", listOf("PLAYSTATION" to "ps", "XBOX" to "xbox", "SWITCH (FULL)" to "switch", "SWITCH (HALF: ONE JOY-CON)" to "joycon", "FIGHTING PAD" to "fight"), { Cfg.tpl }, { Cfg.tpl = it }),
             toggle("FIGHTING PAD: JOYSTICK (OFF = ARROW BUTTONS)", { Cfg.fightStick }, { Cfg.fightStick = it }),
             note("ALL TEMPLATES ACT AS A PLAYSTATION (DUALSHOCK 4) CONTROLLER ON THE PC, SO STEAM KEEPS ITS NATIVE SETTINGS. THE XBOX TEMPLATE JUST USES XBOX NAMES AND POSITIONS.")))
         content.addView(card("CUSTOMISE", LILAC,
@@ -572,6 +577,10 @@ class SettingsActivity : Activity() {
         content.addView(card("PIXELPAD", BABY,
             note("USE A TABLET WITH A PEN AS A TRACKPAD, A DRAWING TABLET, A CONTROLLER AND A PRESENTER FOR YOUR PC."),
             note("LOCK: ON ANY SCREEN, DOUBLE-TAP THE LOCK ICON AT THE TOP LEFT. THE SCREEN GOES DARK AND MINIMAL (STILL IN THE SAME COLOURS), THE TOP BAR STOPS RESPONDING, AND YOU KEEP WHAT YOU NEED: THE PEN, YOUR TABLET BUTTONS, THE CONTROLLER OR THE PREV / NEXT BUTTONS. DOUBLE-TAP AGAIN TO UNLOCK.")))
+        content.addView(card("THEME COLOUR", BABY,
+            chooser("PICK A COLOUR, OR USE AUTO", listOf("AUTO: BY PLAYER" to "auto") + Themes.list.mapIndexed { i, t -> t.name to i.toString() },
+                { Cfg.theme }, { Cfg.theme = it; Core.sender.syncColour(); applyTheme(); show(8) }, fills = Themes.list.mapIndexed { i, t -> i.toString() to t.bottom }.toMap()),
+            note("THE COLOUR YOU PICK BECOMES THE THEME OF THE APP. ON AUTO, PLAYER 1 IS NEON BLUE, PLAYER 2 NEON RED, PLAYER 3 NEON GREEN AND PLAYER 4 NEON PINK. PIXELPAD DESK SHOWS EACH PLAYER IN THEIR COLOUR.")))
         content.addView(card("RESET", PINK, pill("RESET EVERYTHING", PAPER, icon = "retry") {
             AlertDialog.Builder(this).setTitle("RESET ALL SETTINGS?").setMessage("THIS CLEARS EVERY SETTING, BUTTON, GESTURE AND LAYOUT.")
                 .setPositiveButton("RESET") { _, _ -> Cfg.prefs.edit().clear().apply(); Cfg.pcs.clear(); Cfg.keys.clear(); Cfg.seedKeys(); Cfg.gestures.clear(); Cfg.penButtons.clear(); Cfg.resetPenButtons(); Core.applyConnection(); show(8) }

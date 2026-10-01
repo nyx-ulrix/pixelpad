@@ -11,7 +11,9 @@ def get(names, px, color="#2F6FE0"):
     if key not in _cache:
         gap = px // 4
         im = Image.new("RGBA", (px * len(names) + gap * (len(names) - 1), px), (0, 0, 0, 0))
-        for i, n in enumerate(names): im.paste(render(n, px, color), (i * (px + gap), 0))
+        for i, n in enumerate(names):
+            nm, _, col = n.partition(":")                       # "swatch:#FF6FC8" draws that icon in its own colour
+            im.paste(render(nm, px, col or color), (i * (px + gap), 0))
         _cache[key] = ImageTk.PhotoImage(im)
     return _cache[key]
 

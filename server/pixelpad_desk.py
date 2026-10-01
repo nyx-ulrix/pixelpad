@@ -20,6 +20,11 @@ except OSError:
     try: socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(b"show", ("127.0.0.1", 47771))
     finally: sys.exit(0)
 INK, PAPER, LILAC, PINK, HOT, GREEN, BABY = "#2F6FE0", "#F7FBFF", "#D9C8FF", "#FFB8E6", "#E84FB0", "#B8E986", "#BFE3FA"
+# background colours, shared with the tablet app: the first four are the player colours (1 pink, 2 blue, 3 green, 4 lilac)
+THEMES = [("NEON BLUE", (0xD8, 0xF6, 0xFF), (0x7E, 0xD8, 0xF5), "#0AB9E6"), ("NEON RED", (0xFF, 0xE0, 0xDC), (0xFF, 0x8F, 0x84), "#FF3C28"),
+          ("NEON GREEN", (0xE3, 0xFF, 0xDC), (0x8E, 0xEA, 0x7A), "#1EDC00"), ("NEON PINK", (0xFF, 0xE0, 0xEA), (0xFF, 0x8F, 0xB4), "#FF3278"),
+          ("NEON YELLOW", (0xFC, 0xFF, 0xD0), (0xEE, 0xF5, 0x6A), "#E6FF00"), ("NEON PURPLE", (0xF3, 0xDC, 0xFF), (0xD5, 0x8C, 0xF5), "#B400E6"),
+          ("NEON ORANGE", (0xFF, 0xEA, 0xD6), (0xFF, 0xB4, 0x70), "#FF8200"), ("GREY", (0xED, 0xED, 0xED), (0xB5, 0xB5, 0xB5), "#828282")]
 TOP, BOTTOM, QRINK, WARN = (0xC9, 0xEE, 0xFF), (0xFF, 0xC9, 0xEA), "#12306B", "#B0206E"
 F, FS, FB = ("Courier New", 10, "bold"), ("Courier New", 9, "bold"), ("Courier New", 13, "bold")
 CFG = os.path.join(os.environ.get("APPDATA", "."), "PixelPadDesk", "settings.json")
@@ -40,13 +45,15 @@ def load():
     except (OSError, ValueError): return {}
 
 cfg = load()
+theme = [int(cfg.get("theme", -1)) % len(THEMES) if int(cfg.get("theme", -1)) >= 0 else None]   # the Desk's own background colour; until you pick one it keeps the classic blue-to-pink
+if theme[0] is not None: TOP, BOTTOM = THEMES[theme[0]][1], THEMES[theme[0]][2]
 
 def save():
     try:
         os.makedirs(os.path.dirname(CFG), exist_ok=True)
         with open(CFG, "w") as f:
             json.dump({"open": {k: w["visible"] for k, w in reg.items()}, "speed": srv.speed, "area_mode": srv.area_mode,
-                       "custom": list(srv.custom), "screen": screen_idx[0], "highlight": hl["on"], "hl_size": hl["size"], "hl_style": hl["style"], "hl_color": hl["color"], "hl_thick": hl["thick"], "allow_record": srv.allow_record, "pc_name": pc_name.get().strip()[:20] or "MY PC"}, f)
+                       "custom": list(srv.custom), "screen": screen_idx[0], "highlight": hl["on"], "hl_size": hl["size"], "hl_style": hl["style"], "hl_color": hl["color"], "hl_thick": hl["thick"], "allow_record": srv.allow_record, "theme": theme[0] if theme[0] is not None else -1, "pc_name": pc_name.get().strip()[:20] or "MY PC"}, f)
     except OSError: pass
 
 def tip(w, text):
@@ -429,6 +436,17 @@ def reopen_all():
 arow = tk.Frame(st, bg=PAPER); arow.pack(fill="x", pady=8)
 pill(arow, "APPLY", apply, GREEN, "check").pack(side="left", padx=(0, 6))
 pill(arow, "REOPEN ALL WINDOWS", reopen_all, LILAC, "windows").pack(side="left", padx=(0, 6))
+trow = tk.Frame(st, bg=PAPER); trow.pack(fill="x", pady=(0, 8))
+
+def set_theme(i):
+    """The Desk's own background colour; click the button to step through them."""
+    global TOP, BOTTOM
+    theme[0] = i % len(THEMES); TOP, BOTTOM = THEMES[theme[0]][1], THEMES[theme[0]][2]
+    pic(theme_pill, "swatch:" + THEMES[theme[0]][3])
+    if last_size[0]: draw_bg(*last_size)
+    save()
+theme_pill = pill(trow, "THEME COLOUR", lambda: set_theme((theme[0] if theme[0] is not None else -1) + 1), PAPER); theme_pill.pack(side="left")
+pic(theme_pill, "swatch:" + (THEMES[theme[0]][3] if theme[0] is not None else "#E84FB0"))
 # -- pen cursor ring: follows the cursor, but only while the tablet's pen is in range --
 def hl_sig(): return (hl["on"], hl["size"], hl["style"], hl["color"], hl["thick"])
 
@@ -586,9 +604,9 @@ def _tick():
     by = {x.slot: x for x in devs}
     for i, p in enumerate(players, 1):
         x = by.get(i)
-        if not x: p.config(text=f"P{i}  ---- EMPTY ----", image=""); continue
+        if not x: p.config(text=f"P{i}  ---- EMPTY ----"); pic(p, "swatch:" + THEMES[i - 1][3]); continue   # an empty slot still shows its colour
         rate = (x.count - last.get(i, (0, now))[0]) / max(now - last.get(i, (0, now - 1))[1], 1e-3); last[i] = (x.count, now)
-        pic(p, (x.transport, {0: "touchpad", 1: "pen", 2: "gamepad"}.get(x.mode, "dot")))
+        pic(p, ("swatch:" + THEMES[x.colour if x.colour is not None else i - 1][3], x.transport, {0: "touchpad", 1: "pen", 2: "gamepad"}.get(x.mode, "dot")))   # their colour first
         p.config(text=f"P{i}  RTT {x.rtt_us / 1000 if x.rtt_us and x.rtt_us > 0 else 0:4.1f}MS {rate:4.0f}/S")
     ph = current_phone(); ax, ay, aw, ah = srv.area(ph)
     inuse.config(text=(f"TABLET {ph[0]}x{ph[1]}  ->  {aw}x{ah} AT {ax},{ay}" if ph else f"AREA {aw}x{ah} AT {ax},{ay} (WAITING FOR A TABLET)"))

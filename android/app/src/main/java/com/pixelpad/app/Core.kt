@@ -18,6 +18,24 @@ class Gesture(var name: String, var pts: FloatArray, var action: String)
 /** A pen button the user recorded: its name, the button code the pen reports, and what it does (hold = active only while held). */
 class PenButton(var name: String, var bit: Int, var action: String, var hold: Boolean = false)
 
+/**
+ * The app's theme colour, in the standard Nintendo Switch colours, shared with PixelPad Desk. The first four are the player colours
+ * (player 1 neon blue, 2 neon red, 3 neon green, 4 neon pink). On AUTO the theme follows your player number; or you pick any colour.
+ * top/bottom make the background gradient; accent is the stronger colour used for what is selected (dark enough for white text).
+ */
+object Themes {
+    class T(val name: String, val top: Int, val bottom: Int, val accent: Int)
+    val list = listOf(
+        T("NEON BLUE", 0xFFD8F6FF.toInt(), 0xFF7ED8F5.toInt(), 0xFF0A9BC8.toInt()), T("NEON RED", 0xFFFFE0DC.toInt(), 0xFFFF8F84.toInt(), 0xFFE0301E.toInt()),
+        T("NEON GREEN", 0xFFE3FFDC.toInt(), 0xFF8EEA7A.toInt(), 0xFF14A800.toInt()), T("NEON PINK", 0xFFFFE0EA.toInt(), 0xFFFF8FB4.toInt(), 0xFFE02467.toInt()),
+        T("NEON YELLOW", 0xFFFCFFD0.toInt(), 0xFFEEF56A.toInt(), 0xFFB38F00.toInt()), T("NEON PURPLE", 0xFFF3DCFF.toInt(), 0xFFD58CF5.toInt(), 0xFF9A00C8.toInt()),
+        T("NEON ORANGE", 0xFFFFEAD6.toInt(), 0xFFFFB470.toInt(), 0xFFE06A00.toInt()), T("GREY", 0xFFEDEDED.toInt(), 0xFFB5B5B5.toInt(), 0xFF6B6B6B.toInt()),
+    )
+    /** Which colour a setting ("auto" or "0".."7") gives for this player slot (1-4; 0 = not connected yet, treated as player 1). */
+    fun index(theme: String, slot: Int) = if (theme == "auto") (slot - 1).coerceAtLeast(0) % 4 else (theme.toIntOrNull() ?: 0).coerceIn(0, list.size - 1)
+    fun current(): T = list[index(Cfg.theme, Core.sender.slot)]
+}
+
 /** A PC you have paired with. You choose its name; its address is kept so the app can reach it, but it is never shown. */
 class SavedPc(var name: String, var host: String, var port: Int)
 
@@ -109,6 +127,7 @@ object Cfg {
     }
 
     // connection
+    var theme by P("theme", "auto")          // background colour: "auto" (your player colour) or an index into Themes.list
     var transport by P("transport", "wifi")  // usb | wifi | bt (Wi-Fi with the QR code is the easy way in)
     var host by P("host", "")
     var port by P("port", 7777)

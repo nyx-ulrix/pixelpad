@@ -41,10 +41,14 @@ Open PixelPad Desk, then open the app on the tablet. If no PC answers, the QR sc
 
 - **Trackpad:** pen or finger to move, tap to click, two-finger tap to right-click. Movement is sent raw, so Windows' pointer speed applies. Extra fingers go to Windows as touch.
 - **Tablet:** the pen reaches the **whole PC screen**. Choose which part of the tablet the pen uses in **Settings > Tablet**. Pressure curve, tilt, hover range, smoothing, rotation and flip are there too.
-- **Controller:** PlayStation, Xbox and fighting-pad templates (all appear as a DualShock 4). Button sizes follow the screen, so the same layout suits a phone and a tablet. Move and resize any control. Up to four tablets give four controllers.
+- **Controller:** PlayStation, Xbox, Switch (full, like a Pro Controller, or half, a single Joy-Con held sideways) and fighting-pad templates (all appear as a DualShock 4). Button sizes follow the screen, so the same layout suits a phone and a tablet. Move and resize any control. Up to four tablets give four controllers.
 - **Present:** a clicker with previous/next and a pointer area. The volume keys turn slides.
 - **Lock:** on any screen, double-tap the lock icon (top left). The screen goes dark and minimal, the top bar stops responding, and you keep the pen, your tablet buttons, the controller or the prev/next buttons.
 - **Exit** is the power button at the top left: tap it twice. The app pins itself to the screen so Android's own swipes can't pull you out; Android asks about this the first time, and Settings > App turns it off.
+
+## Colours
+
+Pick the app's theme colour in **Settings > App**, from the standard Nintendo Switch colours, or leave it on **Auto** and it follows your player number (1 neon blue, 2 neon red, 3 neon green, 4 neon pink). PixelPad Desk shows each player in their colour, and its own background colour is in its Settings.
 
 ## Your own buttons, pen buttons and gestures
 

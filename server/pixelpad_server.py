@@ -316,6 +316,7 @@ class Device:
         self.play_t = 0.0  # when the last pen packet is due to be played
         self.last_pad = None  # the last controller packet, so an unchanged one is not sent to ViGEm again
         self.touch, self.touch_failed = None, False
+        self.colour = None  # the colour the tablet shows (0-5), told to us by the tablet; None until it says
         self.pen_failed = self.pad_failed = False  # log a missing driver once, not on every packet
         self.last_seen = time.time()
 
@@ -474,6 +475,7 @@ class Server:
             elif act == 4: r["color"] = val % 6
             elif act == 5: r["thick"] = max(1, min(8, val))
             elif act == 6: self.smooth_ms = max(0, min(80, val))
+            elif act == 7: dev.colour = val % 6   # this device's colour (per device, unlike the ring settings)
             return
         with self.lock:
             dev.count += 1

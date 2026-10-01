@@ -38,7 +38,7 @@ import kotlin.math.min
  */
 class ScanActivity : Activity() {
     private val INK = 0xFF2F6FE0.toInt(); private val PAPER = 0xFFF7FBFF.toInt(); private val LILAC = 0xFFD9C8FF.toInt()
-    private val PINK = 0xFFFFB8E6.toInt(); private val HOT = 0xFFE84FB0.toInt(); private val GREEN = 0xFFB8E986.toInt()
+    private val PINK = 0xFFFFB8E6.toInt(); private val HOT get() = Themes.current().accent; private val GREEN = 0xFFB8E986.toInt()
     private val BABY = 0xFFBFE3FA.toInt(); private val SKY = 0xFFC9EEFF.toInt(); private val BLUSH = 0xFFFFC9EA.toInt(); private val WARN = 0xFFB0206E.toInt()
     private val mono = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
     private val handler = Handler(Looper.getMainLooper())
@@ -129,7 +129,7 @@ class ScanActivity : Activity() {
         val shadowed = LinearLayout(this).apply { setBackgroundColor(INK); setPadding(0, 0, dp(7), dp(7)); addView(window, LinearLayout.LayoutParams(-1, -1)) }
 
         val root = FrameLayout(this).apply {
-            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(SKY, BLUSH))
+            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(Themes.current().top, Themes.current().bottom))
             setPadding(dp(28), dp(24), dp(28), dp(24))
             addView(shadowed, FrameLayout.LayoutParams(-1, -1))
         }

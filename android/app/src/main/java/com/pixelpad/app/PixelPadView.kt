@@ -36,7 +36,7 @@ private val INK = 0xFF2F6FE0.toInt()
 private val PAPER = 0xFFF7FBFF.toInt()
 private val LILAC = 0xFFD9C8FF.toInt()
 private val PINK = 0xFFFFB8E6.toInt()
-private val HOT = 0xFFE84FB0.toInt()
+private val HOT get() = Themes.current().accent   // the theme colour
 private val GREEN = 0xFFB8E986.toInt()
 private val BABY = 0xFFBFE3FA.toInt()
 private val PEACH = 0xFFFFD9A8.toInt()
@@ -66,6 +66,27 @@ private fun template(name: String): MutableList<Ctl> = when (name) {
         Ctl("l3", "L3", 6, .30f, .46f, .05f, PAPER), Ctl("r3", "R3", 7, .82f, .70f, .05f, PAPER),
         Ctl("sl", "", -10, .16f, .36f, .17f, PAPER), Ctl("sr", "", -11, .62f, .74f, .17f, PAPER),
     )
+    "switch" -> mutableListOf( // full: like a Switch Pro Controller (the PC still sees a DualShock 4; the buttons sit in the same places)
+        Ctl("tri", "X", 3, .84f, .24f, .11f, LILAC), Ctl("x", "B", 0, .84f, .52f, .11f, BABY),
+        Ctl("sq", "Y", 2, .76f, .38f, .11f, GREEN), Ctl("ci", "A", 1, .92f, .38f, .11f, PINK),
+        Ctl("up", "▲", 12, .34f, .56f, .085f, PAPER), Ctl("dn", "▼", 13, .34f, .80f, .085f, PAPER),
+        Ctl("lf", "◀", 14, .27f, .68f, .085f, PAPER), Ctl("rt", "▶", 15, .41f, .68f, .085f, PAPER),
+        Ctl("l2", "ZL", L2, .10f, .07f, .09f, BABY), Ctl("l1", "L", 4, .24f, .07f, .09f, BABY),
+        Ctl("r1", "R", 5, .76f, .07f, .09f, BABY), Ctl("r2", "ZR", R2, .90f, .07f, .09f, BABY),
+        Ctl("share", "-", 8, .40f, .20f, .065f, PAPER), Ctl("opt", "+", 9, .60f, .20f, .065f, PAPER),
+        Ctl("tp", "", 11, .42f, .36f, .06f, PAPER, "camera"), Ctl("ps", "HOME", 10, .58f, .36f, .085f, GREEN),
+        Ctl("l3", "L3", 6, .30f, .46f, .05f, PAPER), Ctl("r3", "R3", 7, .82f, .70f, .05f, PAPER),
+        Ctl("sl", "", -10, .16f, .36f, .17f, PAPER), Ctl("sr", "", -11, .62f, .74f, .17f, PAPER),
+    )
+    "joycon" -> mutableListOf( // half: a single Joy-Con held sideways: one stick, A B X Y, the shoulder buttons, minus and home
+        Ctl("sl", "", -10, .24f, .60f, .24f, PAPER),
+        Ctl("tri", "X", 3, .80f, .30f, .115f, LILAC), Ctl("ci", "A", 1, .92f, .52f, .115f, PINK),
+        Ctl("x", "B", 0, .80f, .74f, .115f, BABY), Ctl("sq", "Y", 2, .68f, .52f, .115f, GREEN),
+        Ctl("l2", "ZL", L2, .10f, .10f, .085f, BABY), Ctl("l1", "SL", 4, .26f, .10f, .085f, BABY),
+        Ctl("r1", "SR", 5, .74f, .10f, .085f, BABY), Ctl("r2", "ZR", R2, .90f, .10f, .085f, BABY),
+        Ctl("share", "-", 8, .42f, .14f, .06f, PAPER), Ctl("ps", "HOME", 10, .58f, .14f, .065f, GREEN),
+        Ctl("l3", "L3", 6, .24f, .30f, .05f, PAPER),
+    )
     "fight" -> { val stick = Cfg.fightStick; mutableListOf( // arcade layout: a joystick (or arrow buttons) on the left, eight attack buttons in two rows
         Ctl("up", "▲", 12, .17f, .30f, .105f, PAPER, null, !stick), Ctl("dn", "▼", 13, .17f, .74f, .105f, PAPER, null, !stick),
         Ctl("lf", "◀", 14, .07f, .52f, .105f, PAPER, null, !stick), Ctl("rt", "▶", 15, .27f, .52f, .105f, PAPER, null, !stick),
@@ -92,7 +113,8 @@ private fun template(name: String): MutableList<Ctl> = when (name) {
         Ctl("sl", "", -10, .27f, .74f, .20f, PAPER), Ctl("sr", "", -11, .73f, .74f, .20f, PAPER),
     )
 }
-private val TEMPLATES = listOf("ps", "xbox", "fight")
+private val TEMPLATES = listOf("ps", "xbox", "switch", "joycon", "fight")
+private fun tplLabel(t: String) = when (t) { "switch" -> "SWITCH"; "joycon" -> "JOY-CON"; else -> t.uppercase() }
 private val DARK_BG = 0xFF0A0F1F.toInt()
 private val DARK_FACE = 0xFF10182E.toInt()
 
@@ -150,6 +172,7 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
     private val mono = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
     private val uiBtns = ArrayList<Pair<RectF, () -> Unit>>() // rebuilt on every draw
     private var bgBmp: Bitmap? = null
+    private var bgTheme = -1
     private var checkerBmp: Bitmap? = null
 
     private val ctls = ArrayList<Ctl>()
@@ -231,6 +254,7 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
     private val tick = object : Runnable {
         override fun run() {
             stats = tx.stats()
+            if (Themes.index(Cfg.theme, tx.slot) != bgTheme && width > 0) { buildBackground(); invalidate() }   // the colour or our player number changed
             val key = "${stats.connected}${stats.avgUs / 1000}"
             if (key != shownKey) { // repaint only when something on screen would actually change
                 shownKey = key
@@ -243,7 +267,7 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
 
     /** Re-reads the settings after the Settings page closes. */
     fun reload() {
-        refreshPad()
+        refreshPad(); buildBackground()
         if (!editing) loadTemplate(Cfg.tpl)
         when (Cfg.pending) {
             "controller" -> { setMode(CONTROLLER); editing = true }
@@ -279,18 +303,7 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
 
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
         refreshPad()
-        val bg = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888); val c = Canvas(bg)
-        val band = (6 * dp).toInt().coerceAtLeast(2)
-        for (y in 0 until h step band) {
-            val t = y / h.toFloat()
-            fun mix(a: Int, b: Int, s: Int) = ((a shr s and 255) + ((b shr s and 255) - (a shr s and 255)) * t).toInt()
-            p.style = Paint.Style.FILL; p.color = Color.rgb(mix(SKY, BLUSH, 16), mix(SKY, BLUSH, 8), mix(SKY, BLUSH, 0))
-            c.drawRect(0f, y.toFloat(), w.toFloat(), (y + band).toFloat(), p)
-        }
-        p.color = 0x70FFFFFF; val g = 24 * dp
-        var x = 0f; while (x < w) { c.drawRect(x, 0f, x + dp, h.toFloat(), p); x += g }
-        var y = 0f; while (y < h) { c.drawRect(0f, y, w.toFloat(), y + dp, p); y += g }
-        bgBmp = bg
+        buildBackground()
         val ch = Bitmap.createBitmap(w, (h - barH).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888); val cc = Canvas(ch)
         val s = 20 * dp
         for (i in 0..(w / s).toInt()) for (j in 0..(ch.height / s).toInt()) {
@@ -298,6 +311,24 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
         }
         checkerBmp = ch
         computeFit()
+    }
+
+    /** The gradient behind everything: the colour you picked, or on AUTO the one for your player number. */
+    private fun buildBackground() {
+        val w = width; val h = height; if (w == 0 || h == 0) return
+        val th = Themes.current(); bgTheme = Themes.index(Cfg.theme, tx.slot)
+        val bg = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888); val c = Canvas(bg)
+        val band = (6 * dp).toInt().coerceAtLeast(2)
+        for (y in 0 until h step band) {
+            val t = y / h.toFloat()
+            fun mix(a: Int, b: Int, s: Int) = ((a shr s and 255) + ((b shr s and 255) - (a shr s and 255)) * t).toInt()
+            p.style = Paint.Style.FILL; p.color = Color.rgb(mix(th.top, th.bottom, 16), mix(th.top, th.bottom, 8), mix(th.top, th.bottom, 0))
+            c.drawRect(0f, y.toFloat(), w.toFloat(), (y + band).toFloat(), p)
+        }
+        p.color = 0x70FFFFFF; val g = 24 * dp
+        var x = 0f; while (x < w) { c.drawRect(x, 0f, x + dp, h.toFloat(), p); x += g }
+        var y = 0f; while (y < h) { c.drawRect(0f, y, w.toFloat(), y + dp, p); y += g }
+        bgBmp = bg
     }
 
     // ---------- the lock ----------
@@ -1174,7 +1205,7 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
         if (!editing) {
             val y0 = height - 44 * dp
             button(c, RectF(width / 2f - 91 * dp, y0, width / 2f - 3 * dp, y0 + 32 * dp), LILAC, "EDIT", 12f, "edit") { editing = true; selected = null }
-            button(c, RectF(width / 2f + 3 * dp, y0, width / 2f + 91 * dp, y0 + 32 * dp), PINK, tpl.uppercase(), 12f, "gamepad") {
+            button(c, RectF(width / 2f + 3 * dp, y0, width / 2f + 91 * dp, y0 + 32 * dp), PINK, tplLabel(tpl), 12f, "gamepad") {
                 ctrlReset(); loadTemplate(TEMPLATES[(TEMPLATES.indexOf(tpl) + 1) % TEMPLATES.size])
             }
             return
