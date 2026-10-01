@@ -1,6 +1,6 @@
 """Protocol self-check for the PC side. Nothing touches your real mouse, keyboard or pen: Windows input calls are faked.
 Run:  python server/test_server.py"""
-import ctypes, struct, sys
+import ctypes, os, struct, sys
 import pixelpad_server as ns
 
 PEN = "<BBBiiHbbB"
@@ -27,6 +27,14 @@ ns.key = lambda vk, up=False: keys.append((vk, up))
 ns.mouse = lambda flags, dx=0, dy=0, data=0: mouse_calls.append((flags, dx, dy, data))
 
 def pkt(mode, action=0, buttons=0, x=0, y=0, pressure=0, tx=0, ty=0, dt=0): return struct.pack(PEN, mode, action, buttons, x, y, pressure, tx, ty, dt)
+
+# versions compare number by number, and the Desk's version matches the Android app's
+assert ns.newer_version("1.1.10", "1.1.9") and ns.newer_version("1.2", "1.1.9") and not ns.newer_version("1.2.0", "1.2") and not ns.newer_version("1.1.3", "1.1.3")
+import re as _re
+_desk = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "pixelpad_desk.py"), encoding="utf-8").read()
+_gradle = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "android", "app", "build.gradle.kts")
+if os.path.exists(_gradle):
+    assert _re.search(r'^VERSION = "([\d.]+)"', _desk, _re.M).group(1) == _re.search(r'versionName = "([\d.]+)"', open(_gradle, encoding="utf-8").read()).group(1), "Desk VERSION and versionName differ"
 
 srv = ns.Server((0, 0, 1920, 1080), 1.0)
 srv.smooth_ms = 0   # the checks below want packets injected at once; the playout is checked at the end

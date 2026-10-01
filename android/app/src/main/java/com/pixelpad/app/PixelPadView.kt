@@ -48,6 +48,8 @@ private val WARN = 0xFFB0206E.toInt()
 private class Ctl(val id: String, val label: String, val bit: Int, var fx: Float, var fy: Float, var fr: Float, val color: Int,
                   val icon: String? = null, val visible: Boolean = true) {
     val isStick get() = bit <= -10
+    /** Controls of a kind are sized together, so a tight d-pad doesn't shrink the sticks: 0 face, 1 d-pad, 2 shoulders, 3 sticks, 4 menu, 5 stick clicks. */
+    val group get() = when (id) { "tri", "x", "sq", "ci" -> 0; "up", "dn", "lf", "rt" -> 1; "l1", "r1", "l2", "r2" -> 2; "sl", "sr" -> 3; "l3", "r3" -> 5; else -> 4 }
 }
 private const val L2 = -1
 private const val R2 = -2
@@ -178,7 +180,7 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
     private val ctls = ArrayList<Ctl>()
     private var tpl = Cfg.tpl
     private var autoFit = true // until the user edits, sizes are computed for this screen
-    private var fitK = 1f
+    private val gK = FloatArray(6) { 1f }   // the size multiplier computed for each group of controls on this screen
     private var visCache: List<Ctl> = emptyList()   // the visible controls, rebuilt when a template loads
     private val vis get() = visCache
 
@@ -200,21 +202,49 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
         selected = null; computeFit()
     }
 
-    /** Shrinks the default sizes just enough that no two controls, the screen edge or the bottom buttons collide. */
+    /**
+     * Sizes the default controls to fill this screen without crowding it, from a phone to a tablet. First the size at which everything
+     * just fits (the same for every control, never smaller than before). Then each kind of control (face buttons, d-pad, shoulders,
+     * sticks, menu buttons, stick clicks) grows in turn, a little at a time, while it still has room: it keeps some air from its
+     * neighbours, stays off the screen edge and off the EDIT / template buttons, and never gets bigger than a sensible maximum.
+     */
     private fun computeFit() {
         if (width == 0) return
-        val w = width.toFloat(); val h = padH(); val gap = 4 * dp; var k = 1f
-        val v = vis; val basis = ctlBasis()
+        val w = width.toFloat(); val h = padH(); val basis = ctlBasis(); val v = vis
+        val edge = 4 * dp; val air = 4 * dp + 0.006f * basis
+        fun base(c: Ctl) = c.fr * basis
+        fun edgeDist(c: Ctl) = minOf(c.fx * w, w - c.fx * w, c.fy * h, h - c.fy * h)
+        fun barDist(c: Ctl): Float {                             // to the EDIT and template buttons: a small bar at the bottom centre
+            val dx = maxOf(abs(c.fx * w - w / 2) - 92 * dp, 0f); val dy = maxOf((h - 46 * dp) - c.fy * h, 0f)
+            return hypot(dx, dy)
+        }
+        var u = 1f
         for (i in v.indices) {
-            val a = v[i]; val ra = a.fr * basis
-            k = minOf(k, (minOf(a.fx * w, w - a.fx * w, a.fy * h, h - a.fy * h) - gap) / ra)
-            k = minOf(k, (hypot(a.fx * w - w / 2, a.fy * h - (h - 28 * dp)) - 96 * dp - gap) / ra) // EDIT + template buttons
-            for (j in i + 1 until v.size) {
-                val b = v[j]
-                k = minOf(k, (hypot((a.fx - b.fx) * w, (a.fy - b.fy) * h) - gap) / (ra + b.fr * basis))
+            val a = v[i]
+            u = minOf(u, (edgeDist(a) - edge) / base(a), (barDist(a) - edge) / base(a))
+            for (j in i + 1 until v.size) { val b = v[j]; u = minOf(u, (hypot((a.fx - b.fx) * w, (a.fy - b.fy) * h) - edge) / (base(a) + base(b))) }
+        }
+        val k = FloatArray(6) { u.coerceIn(0.2f, 1f) }
+        val maxR = floatArrayOf(.15f, .14f, .10f, .26f, .09f, .06f)   // the biggest each kind should get, as a fraction of the pad height
+        fun room(c: Ctl, g: Float): Boolean {
+            val r = base(c) * g
+            if (edgeDist(c) - r < edge || barDist(c) - r < air) return false
+            for (o in v) {
+                if (o === c) continue
+                val ro = base(o) * (if (o.group == c.group) g else k[o.group])
+                if (hypot((c.fx - o.fx) * w, (c.fy - o.fy) * h) - r - ro < air) return false
+            }
+            return true
+        }
+        repeat(120) {
+            for (g in 0 until 6) {
+                val members = v.filter { it.group == g }
+                if (members.isEmpty()) continue
+                val next = k[g] * 1.03f
+                if (members.all { base(it) * next <= maxR[g] * h && room(it, next) }) k[g] = next
             }
         }
-        fitK = k.coerceIn(0.2f, 1f)
+        for (g in 0 until 6) gK[g] = k[g]
         keepInside()
     }
 
@@ -242,7 +272,7 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
     private fun saveKeys() { keepKeysInside(); Cfg.saveKeys() }
 
     /** Freezes the computed sizes into the layout once the user starts customising it. */
-    private fun bake() { if (autoFit) { val s = fitK * ctlBasis() / padH(); ctls.forEach { it.fr *= s }; autoFit = false } }   // keep exactly the size on screen
+    private fun bake() { if (autoFit) { val s = ctlBasis() / padH(); ctls.forEach { it.fr *= gK[it.group] * s }; autoFit = false } }   // keep exactly the size on screen
 
     private fun saveLayout() { bake(); keepInside(); saveNow() }
     private fun saveNow() = prefs.edit().putString(layoutKey(), ctls.joinToString(";") { "${it.id}:${it.fx}:${it.fy}:${it.fr}" }).apply()
@@ -275,6 +305,7 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
         }
         Cfg.pending = ""
         host.lockNav(mode == TRACKPAD || mode == PRESENT)
+        applyOrientation()
         invalidate()
     }
 
@@ -293,7 +324,16 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
         return true
     }
 
-    override fun onAttachedToWindow() { super.onAttachedToWindow(); post(tick); loadTemplate(Cfg.tpl); host.lockNav(mode == TRACKPAD || mode == PRESENT) }
+    override fun onAttachedToWindow() { super.onAttachedToWindow(); post(tick); loadTemplate(Cfg.tpl); host.lockNav(mode == TRACKPAD || mode == PRESENT); applyOrientation() }
+
+    /** The trackpad and presenter screens follow the orientation setting; the tablet and controller screens are always landscape. */
+    private fun applyOrientation() = host.setOrientation(if (mode == TRACKPAD || mode == PRESENT) Cfg.orient else "landscape")
+
+    /** A small button to flip between landscape and portrait without opening Settings. */
+    private fun rotateButton(c: Canvas) {
+        val r = RectF(width - 60 * dp, height - 46 * dp, width - 8 * dp, height - 10 * dp)
+        button(c, r, PAPER, "", 12f, "rotate") { Cfg.orient = if (width > height) "portrait" else "landscape"; applyOrientation() }
+    }
     override fun onDetachedFromWindow() { removeCallbacks(tick); super.onDetachedFromWindow() }
 
     private fun refreshPad() {
@@ -304,6 +344,7 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
         refreshPad()
         buildBackground()
+        host.lockNav(mode == TRACKPAD || mode == PRESENT)
         val ch = Bitmap.createBitmap(w, (h - barH).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888); val cc = Canvas(ch)
         val s = 20 * dp
         for (i in 0..(w / s).toInt()) for (j in 0..(ch.height / s).toInt()) {
@@ -494,6 +535,7 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
         endTouch(); hoverExit(); ctrlReset(); fingerReset(); releaseKeys()
         mode = m; lastPenMs = SystemClock.uptimeMillis()
         host.lockNav(m == TRACKPAD || m == PRESENT)
+        applyOrientation()
         when (m) { CONTROLLER -> { lastPad[0] = Int.MIN_VALUE; sendPad() }; TABLET -> tx.pen(TABLET, 3, 0, 0, 0); else -> tx.pen(TRACKPAD, 0, 0, 0, 0) }
         invalidate()
     }
@@ -893,7 +935,7 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
     private fun cy(c: Ctl) = barH + c.fy * padH()
     /** Default sizes come from the screen as a whole (the geometric mean of the pad's width and height), so the same layout suits a phone and a tablet. */
     private fun ctlBasis() = sqrt(width * padH())
-    private fun cr(c: Ctl) = if (autoFit) c.fr * ctlBasis() * fitK else c.fr * padH()
+    private fun cr(c: Ctl) = if (autoFit) c.fr * ctlBasis() * gK[c.group] else c.fr * padH()
 
     private fun ctlAt(x: Float, y: Float, sticks: Boolean): Ctl? {
         var best: Ctl? = null; var bd = 1.44f   // 1.2 squared: a little slack around each control
@@ -1130,6 +1172,7 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
 
     private fun drawTrackpad(c: Canvas) {
         outline(c, RectF(8 * dp, barH + 8 * dp, width - 8 * dp, height - 8 * dp), 4 * dp) // just the pad edge; the how-to lives in Settings
+        rotateButton(c)
     }
 
     private fun drawKeys(c: Canvas, dim: Boolean) {
@@ -1189,6 +1232,7 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
         icon(c, "cursor", zone.centerX(), zone.centerY() - ic * .6f, ic, if (dark) dimmed(BABY, .6f) else 0xFF9DB6E8.toInt())
         text(c, "POINTER: MOVE THE PEN OR A FINGER · TAP = CLICK (NEXT SLIDE) · VOLUME KEYS = NEXT / PREV", zone.centerX(), zone.centerY() + ic * 1.2f, 10.5f, Paint.Align.CENTER,
             if (dark) dimmed(BABY, .8f) else INK, zone.width() - 24 * dp)
+        if (!dark) rotateButton(c)
     }
 
     private fun drawPad(c: Canvas, dark: Boolean = false) {

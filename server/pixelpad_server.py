@@ -10,7 +10,7 @@ Modes: 0 trackpad, 1 tablet, 2 controller, 3 ping, 4 hello, 6 key (action = virt
        9 record (tablet -> PC: action 1 = listen for one shortcut on the PC keyboard, 0 = cancel; PC -> tablet: action = virtual key,
        buttons = modifiers, x = 1 recorded / 2 nothing / 3 recording is switched off)
 """
-import argparse, ctypes, heapq, os, shutil, socket, struct, subprocess, threading, time
+import argparse, ctypes, hashlib, heapq, json, os, re, shutil, socket, struct, subprocess, threading, time, urllib.request
 from ctypes import wintypes as w
 
 log = print  # the desktop app swaps this for its own log window
@@ -556,6 +556,41 @@ class Server:
                 while len(buf) >= SIZE: self.handle(buf[:SIZE], c.sendall, key_, "usb"); buf = buf[SIZE:]
         except OSError: pass
         self.drop(key_)
+
+# ---------- updates: the latest release on GitHub ----------
+RELEASES = "https://api.github.com/repos/nyx-ulrix/pixelpad/releases/latest"
+
+def newer_version(a, b):
+    """Is version a newer than b? Compared number by number, so 1.1.10 is newer than 1.1.9."""
+    pa, pb = [int(x) for x in re.findall(r"\d+", a)], [int(x) for x in re.findall(r"\d+", b)]
+    n = max(len(pa), len(pb)); return pa + [0] * (n - len(pa)) > pb + [0] * (n - len(pb))
+
+def latest_release():
+    """(version, exe download url, checksums url, release page) of the newest GitHub release, or None if it can't be read."""
+    try:
+        req = urllib.request.Request(RELEASES, headers={"Accept": "application/vnd.github+json", "User-Agent": "PixelPadDesk"})
+        with urllib.request.urlopen(req, timeout=6) as r: j = json.load(r)
+        urls = {a["name"]: a["browser_download_url"] for a in j.get("assets", [])}
+        exe = next((u for n, u in urls.items() if n.lower().endswith(".exe")), None)
+        return j["tag_name"].lstrip("v"), exe, urls.get("SHA256SUMS.txt"), j.get("html_url")
+    except Exception: return None
+
+def fetch_update(exe_url, sums_url, dest):
+    """Downloads the new exe to dest and checks it against the release's checksum file. Returns True only if it is intact."""
+    try:
+        req = lambda u: urllib.request.Request(u, headers={"User-Agent": "PixelPadDesk"})
+        h = hashlib.sha256()
+        with urllib.request.urlopen(req(exe_url), timeout=30) as r, open(dest, "wb") as f:
+            while chunk := r.read(1 << 16): f.write(chunk); h.update(chunk)
+        if sums_url:
+            with urllib.request.urlopen(req(sums_url), timeout=15) as r: sums = r.read().decode("utf-8", "replace")
+            want = next((l.split()[0] for l in sums.splitlines() if l.strip().endswith(os.path.basename(exe_url.split("?")[0]))), None)
+            if want and want.lower() != h.hexdigest(): os.remove(dest); return False
+        return True
+    except Exception:
+        try: os.remove(dest)
+        except OSError: pass
+        return False
 
 PHONE_PORT = 7777  # the port the phone dials on itself; adb reverse forwards it to whichever port the PC found
 

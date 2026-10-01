@@ -321,7 +321,8 @@ class SettingsActivity : Activity() {
             editor.also { it.layoutParams = lp(h = dp(230)) }, info,
             hbox(pill("FULL TABLET", BABY) { Cfg.ax = 0f; Cfg.ay = 0f; Cfg.aw = 1f; Cfg.ah = 1f; editor.invalidate(); editor.report() },
                 pill("MATCH PC SCREEN SHAPE", GREEN) { editor.matchScreen() }),
-            toggle("KEEP PC SCREEN SHAPE WHILE RESIZING", { Cfg.keepShape }, { Cfg.keepShape = it })))
+            toggle("KEEP PC SCREEN SHAPE WHILE RESIZING", { Cfg.keepShape }, { Cfg.keepShape = it }),
+            note("ON: DRAGGING THE CORNER KEEPS THE BOX THE SAME SHAPE AS YOUR PC'S SCREEN. THE SHAPE IS REMEMBERED FROM THE LAST TIME YOU CONNECTED (16:9 UNTIL THEN), SO IT ALSO WORKS WHILE NOT CONNECTED.")))
         content.addView(card("STROKE SMOOTHING", BABY,
             chooser("SMOOTHNESS", listOf("OFF" to "0", "LOW" to "1", "MEDIUM" to "2", "HIGH" to "3"), { Cfg.smooth.toString() }, { Cfg.smooth = it.toInt(); Core.sender.syncSmooth() }),
             note("STEADIES SHAKY LINES AND EVENS OUT UNEVEN WI-FI. THE PEN POSITION IS FILTERED (FAST STROKES BARELY CHANGE) AND THE PC REPLAYS EACH PEN SAMPLE WITH THE SPACING YOU DREW IT, AFTER A SMALL FIXED DELAY (LOW 10 MS, MEDIUM 20, HIGH 40). OFF IS THE RAWEST AND LOWEST DELAY.")))
@@ -546,6 +547,9 @@ class SettingsActivity : Activity() {
     private fun speedName(v: Float) = when { v < 0.9f -> "%.2fX SLOW".format(v); v < 1.05f -> "1.0X RAW"; v < 1.6f -> "%.2fX FAST".format(v); else -> "%.1fX TURBO".format(v) }
 
     private fun trackpad() {
+        content.addView(card("SCREEN ORIENTATION", BABY,
+            chooser("TRACKPAD AND PRESENTER SCREENS", listOf("LANDSCAPE" to "landscape", "PORTRAIT" to "portrait", "AUTO-ROTATE" to "auto"), { Cfg.orient }, { Cfg.orient = it }),
+            note("THE TABLET AND CONTROLLER SCREENS ALWAYS USE LANDSCAPE. ON THE TRACKPAD AND PRESENTER SCREENS, THE ROTATE BUTTON AT THE BOTTOM RIGHT FLIPS BETWEEN LANDSCAPE AND PORTRAIT.")))
         content.addView(card("POINTER SPEED", LILAC,
             stepper("POINTER SPEED", { speedName(Cfg.trackSpeed) }, { Cfg.trackSpeed = nextSpeed(Cfg.trackSpeed, -1) }, { Cfg.trackSpeed = nextSpeed(Cfg.trackSpeed, 1) }),
             note("1.0X SENDS YOUR MOVEMENT RAW, SO WINDOWS' OWN POINTER SPEED AND ACCELERATION APPLY. RAISE OR LOWER IT HERE TO MOVE FASTER OR SLOWER THAN THAT."),
@@ -612,23 +616,30 @@ class SettingsActivity : Activity() {
         }
         private fun box(s: RectF) = RectF(s.left + Cfg.ax * s.width(), s.top + Cfg.ay * s.height(), s.left + (Cfg.ax + Cfg.aw) * s.width(), s.top + (Cfg.ay + Cfg.ah) * s.height())
 
+        /** The PC screen's size: live when connected, else the last one seen, else 16:9 until the first connection. */
+        private fun pcSize(): Pair<Int, Int> = when {
+            Core.sender.screenW > 0 && Core.sender.screenH > 0 -> Core.sender.screenW to Core.sender.screenH
+            Cfg.pcW > 0 && Cfg.pcH > 0 -> Cfg.pcW to Cfg.pcH
+            else -> 1920 to 1080
+        }
+
         /** Height as a fraction of the tablet, for a width fraction, so the box matches the PC screen's shape. */
         private fun heightFor(aw: Float): Float {
-            val sw = Core.sender.screenW; val sh = Core.sender.screenH
-            if (sw == 0 || sh == 0) return Cfg.ah
+            val (sw, sh) = pcSize()
             val ratio = if (Cfg.rotation % 2 == 0) sw.toFloat() / sh else sh.toFloat() / sw // width / height of the box in tablet pixels
             return aw * padW / (padH * ratio)
         }
 
         fun matchScreen() {
-            var w = 1f; var h = heightFor(w)
-            if (h > 1f) { h = 1f; w = min(1f, (h * (padH * (if (Cfg.rotation % 2 == 0) Core.sender.screenW.toFloat() / max(1, Core.sender.screenH) else Core.sender.screenH.toFloat() / max(1, Core.sender.screenW))) / padW)) }
+            var w = 1f; var h = heightFor(w); val (sw, sh) = pcSize()
+            if (h > 1f) { h = 1f; w = min(1f, (h * (padH * (if (Cfg.rotation % 2 == 0) sw.toFloat() / max(1, sh) else sh.toFloat() / max(1, sw))) / padW)) }
             Cfg.aw = w; Cfg.ah = h.coerceAtMost(1f); Cfg.ax = (1f - Cfg.aw) / 2; Cfg.ay = (1f - Cfg.ah) / 2; invalidate(); report()
         }
 
         fun report() {
-            val sw = Core.sender.screenW; val sh = Core.sender.screenH
-            onInfo("ACTIVE AREA ${(Cfg.aw * 100).roundToInt()}% x ${(Cfg.ah * 100).roundToInt()}% OF THE TABLET" + if (sw > 0) " → PC SCREEN ${sw}x$sh" else " → PC SCREEN (CONNECT TO SEE ITS SIZE)")
+            val (sw, sh) = pcSize()
+            val known = Core.sender.screenW > 0 || Cfg.pcW > 0
+            onInfo("ACTIVE AREA ${(Cfg.aw * 100).roundToInt()}% x ${(Cfg.ah * 100).roundToInt()}% OF THE TABLET → PC SCREEN ${sw}x$sh" + if (known) "" else " (ASSUMED UNTIL YOU CONNECT)")
             invalidate()
         }
 
@@ -660,7 +671,7 @@ class SettingsActivity : Activity() {
                 } else if (mode == 2) {
                     var w = ((e.x - s.left) / s.width() - Cfg.ax).coerceIn(0.1f, max(0.1f, 1f - Cfg.ax))
                     var h = ((e.y - s.top) / s.height() - Cfg.ay).coerceIn(0.1f, max(0.1f, 1f - Cfg.ay))
-                    if (Cfg.keepShape && Core.sender.screenW > 0) {
+                    if (Cfg.keepShape) {
                         h = heightFor(w)
                         if (h > 1f - Cfg.ay) { h = 1f - Cfg.ay; w = min(w, w * h / heightFor(w)) }
                     }

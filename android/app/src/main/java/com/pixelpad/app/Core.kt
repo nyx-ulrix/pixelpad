@@ -130,6 +130,7 @@ object Cfg {
     }
 
     // connection
+    var orient by P("orient", "landscape")   // trackpad and presenter screens: landscape | portrait | auto (the tablet and controller screens are always landscape)
     var theme by P("theme", "")              // this device's colour: an index into Themes.list (empty until first use, when one is picked at random)
     var transport by P("transport", "wifi")  // usb | wifi | bt (Wi-Fi with the QR code is the easy way in)
     var host by P("host", "")
@@ -138,6 +139,7 @@ object Cfg {
     // tablet: where the pen works on the tablet, and how it maps to the PC screen
     var tabletRel by P("tabletRel", false)   // relative (mouse-like) instead of absolute
     var ax by P("ax", 0f); var ay by P("ay", 0f); var aw by P("aw", 1f); var ah by P("ah", 1f) // active area, fractions of the tablet surface
+    var pcW by P("pcW", 0); var pcH by P("pcH", 0)   // the PC screen's size as last seen, so the shape can be kept even when not connected
     var keepShape by P("keepShape", true)    // keep the active area the same shape as the PC screen while resizing it
     var rotation by P("rotation", 0)         // 0, 1, 2, 3 quarter turns clockwise
     var flipX by P("flipX", false); var flipY by P("flipY", false)

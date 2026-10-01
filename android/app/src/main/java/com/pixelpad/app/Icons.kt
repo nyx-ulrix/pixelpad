@@ -55,6 +55,7 @@ object Icons {
             "lock" -> { box(-.75f, -.1f, .75f, .95f); c.drawArc(RectF(x - .45f * s, y - .95f * s, x + .45f * s, y + .1f * s), 180f, 180f, false, p); ln(-.45f, -.4f, -.45f, -.1f); ln(.45f, -.4f, .45f, -.1f) }
             "unlock" -> { box(-.75f, -.1f, .75f, .95f); c.drawArc(RectF(x - .45f * s, y - .95f * s, x + .45f * s, y + .1f * s), 180f, 120f, false, p); ln(-.45f, -.4f, -.45f, -.1f) }
             "gear" -> { c.drawCircle(x, y, .5f * s, p); for (k in 0 until 8) { val a = k * Math.PI / 4; ln((.75 * cos(a)).toFloat(), (.75 * sin(a)).toFloat(), cos(a).toFloat(), sin(a).toFloat()) } }
+            "rotate" -> { c.drawArc(RectF(x - .95f * s, y - .95f * s, x + .95f * s, y + .95f * s), -40f, 250f, false, p); box(-.3f, -.5f, .3f, .5f); ln(.62f, -.78f, .78f, -.38f); ln(.62f, -.78f, .22f, -.74f) }
             "wifi" -> { for (k in 1..3) { val r = .45f * k; c.drawArc(RectF(x - r * s, y + (.8f - r) * s, x + r * s, y + (.8f + r) * s), 225f, 90f, false, p) }; ln(0f, .8f, 0f, .8f) }
             "usb" -> { ln(0f, -1f, 0f, .6f); ln(0f, -1f, -.4f, -.5f); ln(0f, -1f, .4f, -.5f); c.drawCircle(x, y + .85f * s, .25f * s, p); ln(0f, .1f, .7f, -.2f); ln(.7f, -.2f, .7f, -.5f) }
             "bt" -> { ln(-.5f, -.5f, .5f, .5f); ln(.5f, .5f, 0f, 1f); ln(0f, 1f, 0f, -1f); ln(0f, -1f, .5f, -.5f); ln(.5f, -.5f, -.5f, .5f) }

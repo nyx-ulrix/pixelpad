@@ -1,6 +1,8 @@
 package com.pixelpad.app
 
 import android.app.Activity
+import android.app.AlertDialog
+import android.content.pm.ActivityInfo
 import android.content.Intent
 import android.graphics.Rect
 import android.os.Build
@@ -10,12 +12,14 @@ import android.os.Looper
 import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
+import android.widget.Toast
 
 /** What the main screen needs from the app. */
 interface Host {
     fun setDark(on: Boolean)
     fun lockNav(on: Boolean)
     fun openSettings(page: Int = 0)
+    fun setOrientation(o: String)
     fun exit()
 }
 
@@ -24,6 +28,7 @@ class MainActivity : Activity() {
     private var pinned = false
     private var scanChecked = false
     private var scanPending = false
+    private var updateChecked = false
     private val handler = Handler(Looper.getMainLooper())
 
     private val host: Host = object : Host {
@@ -49,6 +54,12 @@ class MainActivity : Activity() {
         /** The Exit button: unpin first, then close the app completely. */
         override fun exit() { try { stopLockTask() } catch (e: Exception) {}; pinned = false; finishAndRemoveTask() }
 
+        /** "landscape", "portrait" or "auto" (follow the sensor). */
+        override fun setOrientation(o: String) {
+            val want = when (o) { "portrait" -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT; "auto" -> ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR; else -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE }
+            if (requestedOrientation != want) requestedOrientation = want
+        }
+
         override fun openSettings(page: Int) = startActivity(Intent(this@MainActivity, SettingsActivity::class.java).putExtra("page", page))
     }
 
@@ -67,12 +78,33 @@ class MainActivity : Activity() {
             scanChecked = true; scanPending = true
             handler.postDelayed(scanRun, 1800)
         }
+        if (!updateChecked) { updateChecked = true; checkForUpdate() }   // once per launch
     }
 
     override fun onActivityResult(req: Int, res: Int, data: Intent?) {
         super.onActivityResult(req, res, data)
         if (req == 3 && res == RESULT_FIRST_USER) host.openSettings(0)   // "type the address instead"
     }
+    /** Asks GitHub for the latest release and, if it is newer than this app, offers to install it. */
+    private fun checkForUpdate() {
+        val have = try { packageManager.getPackageInfo(packageName, 0).versionName ?: "" } catch (e: Exception) { "" }
+        Thread {
+            val r = Updater.latest() ?: return@Thread
+            if (Updater.newer(r.version, have)) runOnUiThread { if (!isFinishing) askToUpdate(r, have) }
+        }.apply { isDaemon = true }.start()
+    }
+
+    private fun askToUpdate(r: Updater.Release, have: String) {
+        try {
+            AlertDialog.Builder(this).setTitle("UPDATE AVAILABLE")
+                .setMessage("PIXELPAD ${r.version} IS OUT (YOU HAVE $have). UPDATE NOW? THE APP RESTARTS WHEN IT IS DONE.")
+                .setPositiveButton("UPDATE") { _, _ ->
+                    try { stopLockTask() } catch (e: Exception) {}; pinned = false   // the installer can't open while the app is pinned
+                    Updater.install(this, r) { msg -> Toast.makeText(this, msg, Toast.LENGTH_LONG).show() }
+                }.setNegativeButton("LATER", null).show()
+        } catch (e: Exception) {}
+    }
+
     private val scanRun = Runnable { scanPending = false; if (!isFinishing && hasWindowFocus() && !Core.sender.connected()) startActivityForResult(Intent(this, ScanActivity::class.java), 3) }
 
     override fun onPause() {

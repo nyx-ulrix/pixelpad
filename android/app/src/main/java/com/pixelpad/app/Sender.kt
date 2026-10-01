@@ -108,7 +108,7 @@ class Sender(private val usbPort: Int = 7777) {
         if (us < 0) return
         synchronized(rtts) { rtts[rttN++ % rtts.size] = us.toLong() }
         val scr = ByteBuffer.wrap(b).order(ByteOrder.LITTLE_ENDIAN).getInt(7)
-        if (scr != 0) { screenW = scr ushr 16; screenH = scr and 0xFFFF }
+        if (scr != 0) { screenW = scr ushr 16; screenH = scr and 0xFFFF; if (Cfg.pcW != screenW || Cfg.pcH != screenH) { Cfg.pcW = screenW; Cfg.pcH = screenH } }
         lastRttUs = us; slot = b[1].toInt(); lastError = ""; lastPong = System.nanoTime()
     }
 

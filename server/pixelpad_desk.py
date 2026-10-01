@@ -1,4 +1,5 @@
 """PixelPad Desk: window app for the PC side of PixelPad (retro pixel style)."""
+VERSION = "1.2.0"   # keep in step with versionName in android/app/build.gradle.kts (test_server.py checks), and with the release tag
 import ctypes, functools, json, math, os, socket, sys, threading, time, tkinter as tk
 from urllib.parse import quote
 from tkinter import scrolledtext
@@ -596,6 +597,7 @@ def _tick():
     tick_n[0] += 1
     if tick_n[0] % 20 == 0: refresh_ips()
     if not ui_visible[0]: update_overlay(); return   # hidden in the tray: only the on-screen outline needs care
+    if update_found[0] and not update_asked[0]: update_asked[0] = True; root.after(200, ask_update)
     now = time.time(); devs = sorted(srv.devices.values(), key=lambda x: x.slot)
     status.config(text=(" CONNECTED" if devs else " WAITING..."), fg=INK if devs else HOT)
     pic(status, ("check",) + tuple(dict.fromkeys(x.transport for x in devs)) if devs else "retry", INK if devs else HOT, int(26 * SC))
@@ -661,6 +663,32 @@ def hide_window():
             try: tray.notify("PixelPad Desk is still running here. Click the icon to open it, or right-click to quit.", "PixelPad Desk")
             except Exception: pass
     else: root.iconify()
+
+# ---------- updates: on start, look for a newer release on GitHub and offer it ----------
+update_found, update_asked = [None], [False]
+threading.Thread(target=lambda: (lambda r: update_found.__setitem__(0, r) if r and ns.newer_version(r[0], VERSION) else None)(ns.latest_release()), daemon=True).start()
+
+def ask_update():
+    """Called once the window is on screen (not while hidden in the tray)."""
+    from tkinter import messagebox
+    ver, exe, sums, page = update_found[0]
+    frozen = getattr(sys, "frozen", False)
+    if not messagebox.askyesno("PixelPad Desk", f"A new version, {ver}, is out (you have {VERSION}).\n\n" + ("Update now? PixelPad Desk restarts when it is done." if frozen and exe else "Open the download page?")):
+        return
+    if not (frozen and exe):
+        import webbrowser; webbrowser.open(page or "https://github.com/nyx-ulrix/pixelpad/releases/latest"); return
+    note = tk.Toplevel(root); note.title("UPDATING"); note.config(bg=PAPER, highlightthickness=T, highlightbackground=INK)
+    tk.Label(note, text="  DOWNLOADING THE UPDATE...  ", bg=PAPER, fg=INK, font=FB, pady=18).pack(); note.geometry(f"+{root.winfo_x() + 80}+{root.winfo_y() + 80}")
+    def work():
+        import tempfile
+        new = os.path.join(tempfile.gettempdir(), "PixelPadDesk-update.exe")
+        if not ns.fetch_update(exe, sums, new):
+            root.after(0, lambda: (note.destroy(), messagebox.showerror("PixelPad Desk", "The update could not be downloaded or did not check out. Nothing was changed."))); return
+        cmd = os.path.join(tempfile.gettempdir(), "pixelpad_update.cmd"); me = sys.executable
+        open(cmd, "w", newline="").write(f'@echo off\r\nset n=0\r\n:wait\r\nping 127.0.0.1 -n 2 >nul\r\nmove /y "{new}" "{me}" >nul 2>&1\r\nif errorlevel 1 (set /a n+=1 & if %n% lss 40 goto wait & exit /b 1)\r\nstart "" "{me}"\r\n(goto) 2>nul & del "%~f0"\r\n')
+        subprocess.Popen(["cmd", "/c", cmd], creationflags=0x08000000 | 0x00000008, close_fds=True)   # no window, detached
+        root.after(0, quit_app)
+    threading.Thread(target=work, daemon=True).start()
 
 def quit_app():
     try:

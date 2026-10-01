@@ -41,8 +41,8 @@ Open PixelPad Desk, then open the app on the tablet. If no PC answers, the QR sc
 
 - **Trackpad:** pen or finger to move, tap to click, two-finger tap to right-click. Movement is sent raw, so Windows' pointer speed applies. Extra fingers go to Windows as touch.
 - **Tablet:** the pen reaches the **whole PC screen**. Choose which part of the tablet the pen uses in **Settings > Tablet**. Pressure curve, tilt, hover range, smoothing, rotation and flip are there too. By default only the pen draws; **What draws** lets a finger draw too (it starts on for devices that report no stylus), and **Palm rejection** can be switched off.
-- **Controller:** PlayStation, Xbox, Switch (full, like a Pro Controller, or half, a single Joy-Con held sideways) and fighting-pad templates (all appear as a DualShock 4). Button sizes follow the screen, so the same layout suits a phone and a tablet. Move and resize any control. Up to four tablets give four controllers.
-- **Present:** a clicker with previous/next and a pointer area. The volume keys turn slides.
+- **Controller:** PlayStation, Xbox, Switch (full, like a Pro Controller, or half, a single Joy-Con held sideways) and fighting-pad templates (all appear as a DualShock 4). Buttons are sized to fill the screen without crowding it, so the same layout suits a phone and a tablet. Move and resize any control. Up to four tablets give four controllers.
+- **Present:** a clicker with previous/next and a pointer area. The volume keys turn slides. The trackpad and presenter screens can be rotated to portrait (the rotate button at the bottom right, or **Settings > Trackpad > Screen orientation**).
 - **Lock:** on any screen, double-tap the lock icon (top left). The screen goes dark and minimal, the top bar stops responding, and you keep the pen, your tablet buttons, the controller or the prev/next buttons.
 - **Exit** is the power button at the top left: tap it twice. The app pins itself to the screen so Android's own swipes can't pull you out; Android asks about this the first time, and Settings > App turns it off.
 
@@ -56,6 +56,10 @@ Pick the app's theme colour in **Settings > App**, from the standard Nintendo Sw
 - **Pen buttons:** press each button on your pen to record it, name it, and choose what it does (a shortcut, a click, the eraser, drawing a gesture, or switching screen).
 - **Gestures:** record a pen shape and map it to anything.
 - **Record a shortcut from your PC keyboard:** when picking an action, choose "Record from my PC keyboard...", then press the shortcut on the PC. This is off until you turn it on in PixelPad Desk's Settings (see below).
+
+## Updates
+
+On start, both the app and PixelPad Desk check GitHub for a newer release and ask whether to update. The app downloads the APK and hands it to Android's installer (Android asks you to confirm). PixelPad Desk downloads the new exe, checks it against the release's `SHA256SUMS.txt`, and restarts into it.
 
 ## A note on safety
 
