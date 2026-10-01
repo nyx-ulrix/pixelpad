@@ -344,6 +344,13 @@ net = tk.StringVar(value="NETWORK 1")
 label(d, text="THE TABLET SCANS THIS ON START, OR: SETTINGS > CONNECTION > SCAN", font=FS, wraplength=int(300 * SC)).pack(fill="x", side="bottom")
 flow = label(d); pic(flow, ("present", "right", "qr", "right", "camera", "right", "check"), INK, int(26 * SC)); flow.pack(side="bottom")
 menu = tk.OptionMenu(d, net, "NETWORK 1"); menu.config(bg=PAPER, fg=INK, font=FS, highlightbackground=INK, relief="solid")
+# the name the QR code carries: the tablet offers it as the default when you save this PC (you can still change it there)
+nrow = tk.Frame(d, bg=PAPER); nrow.pack(fill="x", side="top", pady=(0, 6))
+nl = label(nrow, text=" NAME ON THE TABLET"); pic(nl, "present"); nl.pack(side="left")
+name_entry = tk.Entry(nrow, textvariable=pc_name, font=F, relief="solid"); name_entry.pack(side="left", fill="x", expand=True, padx=(8, 0))
+def commit_name(_=None):
+    pc_name.set(pc_name.get().strip()[:20] or "MY PC"); save()
+name_entry.bind("<FocusOut>", commit_name); name_entry.bind("<Return>", commit_name)
 qr = tk.Canvas(d, bg=PAPER, highlightthickness=T, highlightbackground=INK); qr.pack(fill="both", expand=True)
 
 def pick_net(lab):
