@@ -80,6 +80,10 @@ class MainActivity : Activity() {
             scanChecked = true; scanPending = true
             handler.postDelayed(scanRun, 1800)
         }
+        if (Cfg.updateResume) {   // you were sent to allow installs and Android closed the app: carry on, if it is allowed now
+            Cfg.updateResume = false
+            if (Updater.canInstall(this)) { startActivity(Intent(this, SettingsActivity::class.java).putExtra("page", 8).putExtra("update", true)); updateChecked = true }
+        }
         if (!updateChecked) { updateChecked = true; checkForUpdate() }   // once per launch
     }
 

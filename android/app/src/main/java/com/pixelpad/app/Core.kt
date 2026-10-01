@@ -140,6 +140,7 @@ object Cfg {
 
     // connection
     var orient by P("orient", "landscape")   // trackpad and presenter screens: landscape | portrait | auto (the tablet and controller screens are always landscape)
+    var updateResume by P("updateResume", false)   // sent to Android to allow installs: carry on with the update when the app is next open (Android may close the app when you flip that switch)
     var updateAsked by P("updateAsked", "")   // the newest version the start-up prompt has already offered, so it asks once per version (Settings > App always has the button)
     var theme by P("theme", "")              // this device's colour: an index into Themes.list (empty until first use, when one is picked at random)
     var transport by P("transport", "wifi")  // usb | wifi | bt (Wi-Fi with the QR code is the easy way in)

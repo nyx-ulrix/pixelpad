@@ -603,16 +603,20 @@ class SettingsActivity : Activity() {
         fun busy(msg: String, pct: Int = -1) { status.text = msg.uppercase(); btn.isEnabled = false; btn.alpha = .5f; bar.visibility = if (pct >= 0) View.VISIBLE else View.GONE; bar.pct = pct }
         fun install() {
             val r = found ?: return
-            try { stopLockTask() } catch (e: Exception) {}   // a pinned app can't open Android's own screens (the permission page, the installer)
-            if (!Updater.canInstall(this)) {
-                afterAllow = { install() }
+            if (!Updater.canInstall(this)) {   // only when Android has not been allowed yet do we leave for its page
+                try { stopLockTask() } catch (e: Exception) {}   // a pinned app can't open Android's own screens
+                Cfg.updateResume = true; afterAllow = { install() }
                 idle("ANDROID WANTS YOUR OK FIRST: TURN ON ALLOW FROM THIS SOURCE FOR PIXELPAD, THEN COME BACK AND THE UPDATE STARTS"); Updater.askPermission(this); return
             }
+            Cfg.updateResume = false
             Updater.onResult = { msg -> idle(msg) }
             busy("DOWNLOADING 0%", 0)
             Updater.install(this, r, { got, total ->
-                if (total > 0 && got < total) busy("DOWNLOADING ${(got * 100 / total).toInt()}%  (%.1f / %.1f MB)".format(got / 1048576f, total / 1048576f), (got * 100 / total).toInt())
-                else busy("DOWNLOADED. ANDROID'S INSTALL SCREEN OPENS NEXT: TAP INSTALL. IF YOU DON'T SEE IT, UNLOCK THE SCREEN.", 100)
+                if (total <= 0 || got < total) busy(if (total > 0) "DOWNLOADING ${(got * 100 / total).toInt()}%  (%.1f / %.1f MB)".format(got / 1048576f, total / 1048576f) else "DOWNLOADING %.1f MB".format(got / 1048576f), if (total > 0) (got * 100 / total).toInt() else 0)
+                else {
+                    try { stopLockTask() } catch (e: Exception) {}   // downloaded: only now unpin, so Android can show its install screen
+                    busy("DOWNLOADED. ANDROID'S INSTALL SCREEN OPENS NEXT: TAP INSTALL. IF THE SCREEN LOCKED, UNLOCK IT.", 100)
+                }
             }, { msg -> idle(msg) })
         }
         fun check() {
@@ -633,7 +637,7 @@ class SettingsActivity : Activity() {
         btn.setOnClickListener { if (found != null) install() else check() }
         idle("YOU HAVE VERSION $have"); check()
         return card("UPDATES", GREEN, label("PIXELPAD $have", 12f), status, bar.also { it.layoutParams = lp(h = dp(16)) }, btn,
-            note("PIXELPAD ASKS ABOUT A NEW VERSION ONCE WHEN YOU OPEN THE APP. UPDATING DOWNLOADS THE APK FROM THE LATEST GITHUB RELEASE AND ANDROID ASKS YOU TO CONFIRM THE INSTALL. THE APP UNPINS ITSELF FIRST (ANDROID CAN'T SHOW ITS OWN SCREENS OVER A PINNED APP), AND ANDROID MAY LOCK THE SCREEN WHEN IT DOES: UNLOCK IT AND TAP INSTALL. THE APP RESTARTS WHEN IT IS DONE."))
+            note("PIXELPAD ASKS ABOUT A NEW VERSION ONCE WHEN YOU OPEN THE APP. UPDATING DOWNLOADS THE APK FROM THE LATEST GITHUB RELEASE AND ANDROID ASKS YOU TO CONFIRM THE INSTALL. WHEN THE DOWNLOAD IS DONE THE APP UNPINS ITSELF (ANDROID CAN'T SHOW ITS OWN SCREENS OVER A PINNED APP), AND ANDROID MAY LOCK THE SCREEN WHEN IT DOES: UNLOCK IT AND TAP INSTALL. THE APP RESTARTS WHEN IT IS DONE."))
     }
 
     /** A thin retro progress bar. */
