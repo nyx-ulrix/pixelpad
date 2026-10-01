@@ -396,7 +396,11 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
         val i = stylusIndex(e)
         val now = SystemClock.uptimeMillis()
         if (i >= 0) { lastStylusMs = now; lastPenMs = now; trackPenButtons(e.buttonState) }
-        val penOk = i >= 0 || now - lastStylusMs > 250 // a finger next to a pen is probably a palm
+        // a finger next to a pen is probably a palm. In tablet mode this is the palm rejection setting: on = fingers and palms are ignored
+        // while the pen is near (hovering or writing) and for a moment after; off = no guard, so a finger can use the buttons any time
+        val palmMs = if (mode == TABLET) (if (Cfg.palmReject) 1200L else 0L) else 250L
+        val penOk = i >= 0 || palmMs == 0L || now - lastStylusMs > palmMs
+        if (mode == TABLET && Cfg.palmReject && i < 0 && (!penOk || e.getToolType(e.actionIndex) == 5 /* palm */)) return true
         // while a pen gesture is being drawn (gesture pen button held), the on-screen buttons, lock and exit ignore the pen
         val gestureNow = i >= 0 && mode == TABLET && gestureHeld(e.buttonState)
         // the lock icon: pen or finger, double tap

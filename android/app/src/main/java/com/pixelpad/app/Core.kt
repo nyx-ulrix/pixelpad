@@ -142,6 +142,7 @@ object Cfg {
     var gamma by P("gamma", 1f)              // pressure curve: 1 = raw, below 1 = softer, above 1 = firmer
     var pressMin by P("pressMin", 0f)        // click threshold: pressure needed before the pen counts as touching
     var tiltOn by P("tiltOn", true)
+    var palmReject by P("palmReject", true)  // tablet mode: ignore fingers and palms (on the buttons and top bar) while the pen is near
     var smooth by P("smooth", 2)             // stroke smoothing: 0 off, 1 low, 2 medium, 3 high (filters pen jitter here, evens out arrival times on the PC)
     var hoverRange by P("hoverRange", 100)   // % of the pen's hover distance that counts
     var linger by P("linger", 150)           // ms the pen stays in range after the sensor loses it
@@ -177,7 +178,7 @@ object Cfg {
 
     fun resetTablet() {
         ax = 0f; ay = 0f; aw = 1f; ah = 1f; keepShape = true; rotation = 0; flipX = false; flipY = false
-        gamma = 1f; pressMin = 0f; tiltOn = true; smooth = 2; hoverRange = 100; linger = 150; tabletRel = false
+        gamma = 1f; pressMin = 0f; tiltOn = true; smooth = 2; hoverRange = 100; linger = 150; tabletRel = false; palmReject = true
     }
 }
 
