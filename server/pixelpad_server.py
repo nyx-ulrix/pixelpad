@@ -359,7 +359,7 @@ class Pairing:
         with self.lock:
             st = self.sessions.get(sid)
             if st is None:
-                if len(self.sessions) >= 16: self.sessions.popitem(last=False)
+                if len(self.sessions) >= 256: self.sessions.popitem(last=False)
                 self.sessions[sid] = [c, 1]; return True
             self.sessions.move_to_end(sid)
             top, bits = st
