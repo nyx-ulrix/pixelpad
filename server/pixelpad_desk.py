@@ -1,6 +1,6 @@
 """PixelPad Desk: window app for the PC side of PixelPad (retro pixel style)."""
 VERSION = "1.2.3"   # keep in step with versionName in android/app/build.gradle.kts (test_server.py checks), and with the release tag
-import ctypes, functools, json, math, os, socket, sys, threading, time, tkinter as tk
+import ctypes, functools, json, math, os, socket, subprocess, sys, threading, time, tkinter as tk
 from urllib.parse import quote
 from tkinter import scrolledtext
 import segno
@@ -678,16 +678,30 @@ def ask_update():
     if not (frozen and exe):
         import webbrowser; webbrowser.open(page or "https://github.com/nyx-ulrix/pixelpad/releases/latest"); return
     note = tk.Toplevel(root); note.title("UPDATING"); note.config(bg=PAPER, highlightthickness=T, highlightbackground=INK)
-    tk.Label(note, text="  DOWNLOADING THE UPDATE...  ", bg=PAPER, fg=INK, font=FB, pady=18).pack(); note.geometry(f"+{root.winfo_x() + 80}+{root.winfo_y() + 80}")
+    msg = tk.Label(note, text="  STARTING THE DOWNLOAD...  ", bg=PAPER, fg=INK, font=FB, pady=10); msg.pack(padx=18)
+    bw, bh = round(320 * SC), round(20 * SC)
+    bar = tk.Canvas(note, width=bw, height=bh, bg=PAPER, highlightthickness=T, highlightbackground=INK); bar.pack(padx=18, pady=(0, 16))
+    fill = bar.create_rectangle(0, 0, 0, bh, fill=HOT, width=0)
+    note.geometry(f"+{root.winfo_x() + 80}+{root.winfo_y() + 80}")
+    def show(got, total):
+        """Runs on the window's thread: the percentage and MB in the label, and the bar filled to match."""
+        if total and got < total: msg.config(text=f"  DOWNLOADING {got * 100 // total}%  ({got / 1048576:.1f} / {total / 1048576:.1f} MB)  ")
+        elif total: msg.config(text="  CHECKING THE DOWNLOAD...  ")
+        else: msg.config(text=f"  DOWNLOADING {got / 1048576:.1f} MB  ")
+        bar.coords(fill, 0, 0, bw * got // total if total else 0, bh)
     def work():
         import tempfile
         new = os.path.join(tempfile.gettempdir(), "PixelPadDesk-update.exe")
-        if not ns.fetch_update(exe, sums, new):
+        if not ns.fetch_update(exe, sums, new, lambda g, t: root.after(0, show, g, t)):
             root.after(0, lambda: (note.destroy(), messagebox.showerror("PixelPad Desk", "The update could not be downloaded or did not check out. Nothing was changed."))); return
-        cmd = os.path.join(tempfile.gettempdir(), "pixelpad_update.cmd"); me = sys.executable
-        open(cmd, "w", newline="").write(f'@echo off\r\nset n=0\r\n:wait\r\nping 127.0.0.1 -n 2 >nul\r\nmove /y "{new}" "{me}" >nul 2>&1\r\nif errorlevel 1 (set /a n+=1 & if %n% lss 40 goto wait & exit /b 1)\r\nstart "" "{me}"\r\n(goto) 2>nul & del "%~f0"\r\n')
-        subprocess.Popen(["cmd", "/c", cmd], creationflags=0x08000000 | 0x00000008, close_fds=True)   # no window, detached
-        root.after(0, quit_app)
+        try:
+            cmd = os.path.join(tempfile.gettempdir(), "pixelpad_update.cmd"); me = sys.executable
+            open(cmd, "w", newline="").write(f'@echo off\r\nset n=0\r\n:wait\r\nping 127.0.0.1 -n 2 >nul\r\nmove /y "{new}" "{me}" >nul 2>&1\r\nif errorlevel 1 (set /a n+=1 & if %n% lss 40 goto wait & exit /b 1)\r\nstart "" "{me}"\r\n(goto) 2>nul & del "%~f0"\r\n')
+            subprocess.Popen(["cmd", "/c", cmd], creationflags=0x08000000 | 0x00000008, close_fds=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)   # no window, detached
+            root.after(0, lambda: msg.config(text="  RESTARTING...  "))
+            root.after(0, quit_app)
+        except Exception:
+            root.after(0, lambda: (note.destroy(), messagebox.showerror("PixelPad Desk", "The update downloaded but could not be started. Nothing was changed.")))
     threading.Thread(target=work, daemon=True).start()
 
 def quit_app():

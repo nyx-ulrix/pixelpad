@@ -37,6 +37,16 @@ _gradle = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "androi
 if os.path.exists(_gradle):
     assert _re.search(r'^VERSION = "([\d.]+)"', _desk, _re.M).group(1) == _re.search(r'versionName = "([\d.]+)"', open(_gradle, encoding="utf-8").read()).group(1), "Desk VERSION and versionName differ"
 
+# the update download reports its progress, checks the checksum, and throws a tampered file away
+import hashlib as _hl, tempfile as _tf, pathlib as _pl
+_d = _pl.Path(_tf.mkdtemp()); (_d / "new.exe").write_bytes(os.urandom(300000))
+(_d / "SHA256SUMS.txt").write_text(_hl.sha256((_d / "new.exe").read_bytes()).hexdigest() + "  new.exe\n")
+_seen = []; _out = str(_d / "got.exe")
+assert ns.fetch_update((_d / "new.exe").as_uri(), (_d / "SHA256SUMS.txt").as_uri(), _out, lambda g, t: _seen.append((g, t))) and os.path.getsize(_out) == 300000
+assert _seen and _seen[-1] == (300000, 300000) and all(0 < g <= t for g, t in _seen), _seen
+(_d / "SHA256SUMS.txt").write_text("0" * 64 + "  new.exe\n")
+assert not ns.fetch_update((_d / "new.exe").as_uri(), (_d / "SHA256SUMS.txt").as_uri(), _out) and not os.path.exists(_out)
+
 srv = ns.Server((0, 0, 1920, 1080), 1.0)
 srv.smooth_ms = 0   # the checks below want packets injected at once; the playout is checked at the end
 replies = []

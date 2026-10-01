@@ -596,13 +596,18 @@ def latest_release():
         return j["tag_name"].lstrip("v"), exe, urls.get("SHA256SUMS.txt"), j.get("html_url")
     except Exception: return None
 
-def fetch_update(exe_url, sums_url, dest):
-    """Downloads the new exe to dest and checks it against the release's checksum file. Returns True only if it is intact."""
+def fetch_update(exe_url, sums_url, dest, progress=None):
+    """Downloads the new exe to dest and checks it against the release's checksum file. Returns True only if it is intact.
+    progress(bytes so far, total bytes or 0) is called as it downloads (from this thread), about ten times a second."""
     try:
         req = lambda u: urllib.request.Request(u, headers={"User-Agent": "PixelPadDesk"})
         h = hashlib.sha256()
         with urllib.request.urlopen(req(exe_url), timeout=30) as r, open(dest, "wb") as f:
-            while chunk := r.read(1 << 16): f.write(chunk); h.update(chunk)
+            total, got, shown = int(r.headers.get("Content-Length") or 0), 0, 0.0
+            while chunk := r.read(1 << 16):
+                f.write(chunk); h.update(chunk); got += len(chunk)
+                if progress and time.time() - shown > 0.1: shown = time.time(); progress(got, total)
+            if progress: progress(got, total or got)
         if sums_url:
             with urllib.request.urlopen(req(sums_url), timeout=15) as r: sums = r.read().decode("utf-8", "replace")
             want = next((l.split()[0] for l in sums.splitlines() if l.strip().endswith(os.path.basename(exe_url.split("?")[0]))), None)
