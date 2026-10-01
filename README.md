@@ -35,6 +35,7 @@ Open PixelPad Desk, then open the app on the tablet. If no PC answers, the QR sc
 - **USB:** plug in with USB debugging on and choose the cable in **Settings > Connection**. PixelPad Desk sets the link up by itself (it needs `adb`, from the Android platform tools).
 - **Bluetooth:** turn on Bluetooth tethering on the tablet, connect to it from the PC, then scan the QR code.
 - PixelPad Desk uses the first free port from 7777 up, and the QR code carries it.
+- **Pairing:** the QR code also carries a pairing key. From 1.3.0 every packet is signed and encrypted with it (see below), so a device that hasn't scanned the code can't control the PC. If you can't scan, type the **pairing code** shown under the QR code (Settings > Connection > Add a PC by its address; for USB, the pairing code box on that page). **New pairing code** in PixelPad Desk's Settings replaces it, and every device then scans again.
 - Can't connect? The Connection page and PixelPad Desk both have a checklist that says which step fails. On Windows, allow PixelPad Desk through the firewall on **private** networks.
 
 ## Screens
@@ -59,11 +60,18 @@ Pick the app's theme colour in **Settings > App**, from the standard Nintendo Sw
 
 ## Updates
 
-On start, both the app and PixelPad Desk check GitHub for a newer release and ask whether to update. The app downloads the APK and hands it to Android's installer (Android asks you to confirm). PixelPad Desk downloads the new exe, checks it against the release's `SHA256SUMS.txt`, and restarts into it.
+On start, both the app and PixelPad Desk check GitHub for a newer release and ask whether to update (the app asks once per version); both also have a version and update section in Settings with a progress bar. The app downloads the APK and hands it to Android's installer (Android asks you to confirm). PixelPad Desk downloads the new exe next to itself, checks it against the release's `SHA256SUMS.txt`, swaps it in and restarts.
 
 ## A note on safety
 
-PixelPad Desk listens for the tablet on your network. Use it on networks you trust, and allow it through the Windows firewall for **private** networks only. There is no pairing password yet, so anyone on the same network could send it input while it is running. "Tablet may record shortcuts" is off by default for this reason: turn it on only while you need it.
+PixelPad Desk lets a paired device move the mouse, type and press shortcuts on your PC, so it only accepts packets from devices that scanned its QR code.
+
+- **What is protected (1.3.0 and later).** The QR code carries a random 128-bit pairing key. Every packet, in both directions, is sent in a frame that is encrypted and signed with it (HMAC-SHA256, new for each packet, with a per-run nonce and a replay window). Someone on the same public Wi-Fi, on your Bluetooth tether, or another app or program using the USB tunnel can't send input, read what you do, or replay a recording of it. Packets that fail the check are dropped before anything is created, so they can't take a player slot either. The app only believes replies from the PC's address and port, and only sealed ones.
+- **What is not.** Whoever sees the QR code or the pairing code can pair, so don't share screenshots of them (the code is not drawn as text in the app, and the address is never shown). If it leaks, use **New pairing code**. Frames are not hidden from traffic analysis: someone on the network can still see that the two devices are talking, and how often. The key is stored in the app's private storage and in PixelPad Desk's settings file; backups of the app are off.
+- **Old apps.** Versions before 1.3.0 don't have the key. PixelPad Desk refuses them (it says so in its log and checklist) until you update the app, or turn on **Allow old apps without pairing (not safe)** in Settings. An app that has no key because you scanned an old PixelPad Desk's QR code still works with that old Desk.
+- **Ports.** The USB link listens on `127.0.0.1` only, and the Wi-Fi/Bluetooth link on UDP; both need the pairing key. Allow PixelPad Desk through the Windows firewall on **private** networks only.
+- **Recording shortcuts** ("Controller devices may record shortcuts" in the Desk's Settings) is off every time the Desk starts: it listens to this PC's keyboard, so turn it on only while you need it.
+- **Updates** are downloaded only from this project's own GitHub releases, and PixelPad Desk refuses an exe that doesn't match the release's `SHA256SUMS.txt`. Releases are not yet code-signed with a dedicated key (the APK uses the standard Android debug key and the exe has no Authenticode signature), so the integrity of an update rests on your GitHub account and TLS.
 
 The exe is not code-signed, so Windows SmartScreen or your antivirus may warn about it the first time. The source is all here.
 
