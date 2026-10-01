@@ -44,7 +44,7 @@ Open PixelPad Desk, then open the app on the tablet. If no PC answers, the QR sc
 - **Controller:** PlayStation, Xbox, Switch (full, like a Pro Controller, or half, a single Joy-Con held sideways) and fighting-pad templates (all appear as a DualShock 4). Buttons are sized to fill the screen without crowding it, so the same layout suits a phone and a tablet. Move and resize any control. Up to four tablets give four controllers.
 - **Present:** a clicker with previous/next and a pointer area. The volume keys turn slides. The trackpad and presenter screens can be rotated to portrait (the rotate button at the bottom right, or **Settings > Trackpad > Screen orientation**).
 - **Lock:** on any screen, double-tap the lock icon (top left). The screen goes dark and minimal, the top bar stops responding, and you keep the pen, your tablet buttons, the controller or the prev/next buttons.
-- **Exit** is the power button at the top left: tap it twice. The app pins itself to the screen so Android's own swipes can't pull you out; Android asks about this the first time, and Settings > App turns it off.
+- **Exit** is the power button at the top left: tap it twice. Pinning the app to the screen, so Android's own swipes can't pull you out, is off by default (Android shows its own message when it pins and locks the screen when you leave); Settings > Trackpad turns it on.
 
 ## Colours
 

@@ -164,7 +164,7 @@ object Cfg {
     var linger by P("linger", 150)           // ms the pen stays in range after the sensor loses it
 
     // other screens
-    var lockNav by P("lockNav", true)        // pin the app: blocks Android's own swipe, 3- and 4-finger gestures. Leave with the Exit button
+    var lockNav by P("lockNav", false)       // pin the app: blocks Android's own swipe, 3- and 4-finger gestures. Off by default: Android shows its own "pinned" message and locks the screen on exit
     var penDrag by P("penDrag", "select")    // select: pressing the pen down and dragging drags/selects; move: it only moves the cursor
     var naturalScroll by P("naturalScroll", true)
     var trackSpeed by P("trackSpeed", 1f)    // 1.0 = raw: Windows' own pointer speed applies

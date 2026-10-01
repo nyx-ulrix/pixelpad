@@ -569,7 +569,7 @@ class SettingsActivity : Activity() {
             note("ONE FINGER OR THE PEN MOVES THE CURSOR. TWO OR MORE FINGERS ARE SENT TO WINDOWS AS REAL TOUCH INPUT, SO SCROLLING, PINCHING AND THREE- AND FOUR-FINGER SWIPES ARE WHATEVER YOUR WINDOWS TOUCH GESTURE SETTINGS SAY (WINDOWS SETTINGS > BLUETOOTH & DEVICES > TOUCH). PIXELPAD ADDS NO SHORTCUTS OF ITS OWN.")))
         content.addView(card("PIN THE APP", BABY,
             toggle("BLOCK ANDROID'S GESTURES BY PINNING", { Cfg.lockNav }, { Cfg.lockNav = it }),
-            note("PINNING STOPS ANDROID'S OWN SWIPES AND THREE- AND FOUR-FINGER GESTURES FROM TAKING YOU OUT OF THE APP. IT STAYS PINNED ACROSS SCREENS. LEAVE WITH THE EXIT BUTTON AT THE TOP LEFT (TAP IT TWICE). ANDROID MAY LOCK THE SCREEN WHEN YOU UNPIN: TURN THAT OFF IN ANDROID'S SETTINGS > SECURITY > SCREEN PINNING.")))
+            note("OFF BY DEFAULT. PINNING STOPS ANDROID'S OWN SWIPES AND THREE- AND FOUR-FINGER GESTURES FROM TAKING YOU OUT OF THE APP, BUT ANDROID SHOWS ITS OWN APP-PINNED MESSAGE WHEN IT PINS AND LOCKS THE SCREEN WHEN YOU LEAVE (TURN THAT OFF IN ANDROID'S SETTINGS > SECURITY > SCREEN PINNING). WITH PINNING OFF, THE EXIT BUTTON AT THE TOP LEFT (TAP IT TWICE) JUST CLOSES THE APP.")))
         content.addView(card("PEN DRAGGING", LILAC,
             chooser("WHEN YOU PRESS THE PEN DOWN AND DRAG", listOf("DRAGS / SELECTS" to "select", "ONLY MOVES THE CURSOR" to "move"), { Cfg.penDrag }, { Cfg.penDrag = it }),
             note("DRAGS / SELECTS: LIKE HOLDING A MOUSE BUTTON, WITH NO DELAY: THE BUTTON GOES DOWN THE MOMENT THE PEN TOUCHES. A QUICK TAP IS A CLICK, HOLDING STILL IS A RIGHT CLICK, HOVERING MOVES THE CURSOR. ONLY MOVES THE CURSOR: TAP, THEN TOUCH AND DRAG TO SELECT. FINGERS ALWAYS WORK LIKE A LAPTOP TRACKPAD, WITH TAP-THEN-DRAG TO SELECT.")))
@@ -612,7 +612,7 @@ class SettingsActivity : Activity() {
             Updater.onResult = { msg -> idle(msg) }
             busy("DOWNLOADING 0%", 0)
             Updater.install(this, r, { got, total ->
-                if (total <= 0 || got < total) busy(if (total > 0) "DOWNLOADING ${(got * 100 / total).toInt()}%  (%.1f / %.1f MB)".format(got / 1048576f, total / 1048576f) else "DOWNLOADING %.1f MB".format(got / 1048576f), if (total > 0) (got * 100 / total).toInt() else 0)
+                if (total <= 0 || got < total) busy(if (total > 0) "DOWNLOADING ${(got * 100 / total).toInt()}%% (%.1f / %.1f MB)".format(got / 1048576f, total / 1048576f) else "DOWNLOADING %.1f MB".format(got / 1048576f), if (total > 0) (got * 100 / total).toInt() else 0)
                 else {
                     try { stopLockTask() } catch (e: Exception) {}   // downloaded: only now unpin, so Android can show its install screen
                     busy("DOWNLOADED. ANDROID'S INSTALL SCREEN OPENS NEXT: TAP INSTALL. IF THE SCREEN LOCKED, UNLOCK IT.", 100)
