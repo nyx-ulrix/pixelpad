@@ -11,7 +11,7 @@ A retro pastel pixel app on the tablet, and a small companion, **PixelPad Desk**
 
 You need a Windows 10 (1809 or newer) or Windows 11 PC and an Android 7+ tablet or phone.
 
-**Download:** the [latest release](https://github.com/nyx-ulrix/pixelpad/releases/latest) has `PixelPad-1.2.0.apk` (install it on the tablet; it is signed with the standard debug key, so Android will ask you to allow installs from unknown sources) and `PixelPadDesk-1.2.0.exe` (run it on the PC, no install needed), plus `SHA256SUMS.txt`. Or build both yourself:
+**Download:** the [latest release](https://github.com/nyx-ulrix/pixelpad/releases/latest) has `PixelPad-1.2.1.apk` (install it on the tablet; it is signed with the standard debug key, so Android will ask you to allow installs from unknown sources) and `PixelPadDesk-1.2.1.exe` (run it on the PC, no install needed), plus `SHA256SUMS.txt`. Or build both yourself:
 
 **PC (PixelPad Desk)**
 ```
@@ -52,7 +52,7 @@ Pick the app's theme colour in **Settings > App**, from the standard Nintendo Sw
 
 ## Your own buttons, pen buttons and gestures
 
-- **Tablet keys:** as many buttons as you like on the tablet screen, each mapped to a shortcut, a click or the eraser. These also work while locked.
+- **Tablet keys:** as many buttons as you like on the tablet screen, each mapped to a shortcut, a click or the eraser. These also work while locked. A left, right or middle click key makes the pen itself act as that mouse button while you hold it (or for the next stroke if you just tap it).
 - **Pen buttons:** press each button on your pen to record it, name it, and choose what it does (a shortcut, a click, the eraser, drawing a gesture, or switching screen).
 - **Gestures:** record a pen shape and map it to anything.
 - **Record a shortcut from your PC keyboard:** when picking an action, choose "Record from my PC keyboard...", then press the shortcut on the PC. This is off until you turn it on in PixelPad Desk's Settings (see below).
