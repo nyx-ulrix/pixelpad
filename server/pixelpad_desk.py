@@ -561,6 +561,15 @@ def toggle_record():
     srv.allow_record = not srv.allow_record; flag(rec_pill, "keyboard", srv.allow_record); save()
 rec_pill = pill(brow, "CONTROLLER DEVICES MAY RECORD SHORTCUTS", toggle_record, BABY, "keyboard"); flag(rec_pill, "keyboard", srv.allow_record); rec_pill.pack(side="left")
 hint(st, "CLOSING THE WINDOW KEEPS PIXELPAD RUNNING IN THE TRAY (BOTTOM RIGHT OF THE TASKBAR).", wrap=700).pack(fill="x", pady=(0, 8))
+# -- version and updates (the logic is with the update code below) --
+label(st, text="VERSION AND UPDATES").pack(fill="x")
+vcard = tk.Frame(st, bg=PAPER); vcard.pack(fill="x", pady=(2, 8))
+vl = label(vcard, text=f" PIXELPAD DESK {VERSION}"); pic(vl, "gear"); vl.pack(fill="x")
+vstat = label(vcard, text=" CHECKING GITHUB...", font=FS); vstat.pack(fill="x", pady=(2, 4))
+vbw, vbh = round(320 * SC), round(20 * SC)
+vbar = tk.Canvas(vcard, width=vbw, height=vbh, bg=PAPER, highlightthickness=T, highlightbackground=INK)   # shown only while downloading
+vfill = vbar.create_rectangle(0, 0, 0, vbh, fill=HOT, width=0)
+vbtn = pill(vcard, "CHECK FOR UPDATES", lambda: v_click(), GREEN, "retry"); vbtn.pack(anchor="w")
 label(st, text="LOG").pack(fill="x")
 out = scrolledtext.ScrolledText(st, height=6, font=FS, bg=PAPER, fg=INK, relief="solid"); out.pack(fill="both", expand=True)
 lrow = tk.Frame(st, bg=PAPER); lrow.pack(fill="x", pady=(6, 0))
@@ -664,9 +673,31 @@ def hide_window():
             except Exception: pass
     else: root.iconify()
 
-# ---------- updates: on start, look for a newer release on GitHub and offer it ----------
+# ---------- updates: on start, look for a newer release on GitHub and offer it; Settings > version and updates does the same on request ----------
 update_found, update_asked = [None], [False]
-threading.Thread(target=lambda: (lambda r: update_found.__setitem__(0, r) if r and ns.newer_version(r[0], VERSION) else None)(ns.latest_release()), daemon=True).start()
+
+def progress_text(got, total):
+    if got < 0: return "RESTARTING..."
+    if total and got < total: return f"DOWNLOADING {got * 100 // total}%  ({got / 1048576:.1f} / {total / 1048576:.1f} MB)"
+    return "CHECKING THE DOWNLOAD..." if total else f"DOWNLOADING {got / 1048576:.1f} MB"
+
+def do_update(exe, sums, show, fail):
+    """Downloads the new exe (show(got, total) reports progress, show(-1, -1) means restarting), checks it, then hands over to a script
+    that swaps it in and starts it. fail(text) is called if anything goes wrong; both run on the window's thread."""
+    def work():
+        import tempfile
+        new = os.path.join(tempfile.gettempdir(), "PixelPadDesk-update.exe")
+        if not ns.fetch_update(exe, sums, new, lambda g, t: root.after(0, show, g, t)):
+            root.after(0, fail, "The update could not be downloaded or did not check out. Nothing was changed."); return
+        try:
+            cmd = os.path.join(tempfile.gettempdir(), "pixelpad_update.cmd"); me = sys.executable
+            open(cmd, "w", newline="").write(f'@echo off\r\nset n=0\r\n:wait\r\nping 127.0.0.1 -n 2 >nul\r\nmove /y "{new}" "{me}" >nul 2>&1\r\nif errorlevel 1 (set /a n+=1 & if %n% lss 40 goto wait & exit /b 1)\r\nstart "" "{me}"\r\n(goto) 2>nul & del "%~f0"\r\n')
+            subprocess.Popen(["cmd", "/c", cmd], creationflags=0x08000000 | 0x00000008, close_fds=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)   # no window, detached
+            root.after(0, show, -1, -1)
+            root.after(0, quit_app)
+        except Exception:
+            root.after(0, fail, "The update downloaded but could not be started. Nothing was changed.")
+    threading.Thread(target=work, daemon=True).start()
 
 def ask_update():
     """Called once the window is on screen (not while hidden in the tray)."""
@@ -684,25 +715,43 @@ def ask_update():
     fill = bar.create_rectangle(0, 0, 0, bh, fill=HOT, width=0)
     note.geometry(f"+{root.winfo_x() + 80}+{root.winfo_y() + 80}")
     def show(got, total):
-        """Runs on the window's thread: the percentage and MB in the label, and the bar filled to match."""
-        if total and got < total: msg.config(text=f"  DOWNLOADING {got * 100 // total}%  ({got / 1048576:.1f} / {total / 1048576:.1f} MB)  ")
-        elif total: msg.config(text="  CHECKING THE DOWNLOAD...  ")
-        else: msg.config(text=f"  DOWNLOADING {got / 1048576:.1f} MB  ")
-        bar.coords(fill, 0, 0, bw * got // total if total else 0, bh)
+        msg.config(text=f"  {progress_text(got, total)}  ")
+        bar.coords(fill, 0, 0, bw * got // total if total and got >= 0 else 0, bh)
+    do_update(exe, sums, show, lambda text: (note.destroy(), messagebox.showerror("PixelPad Desk", text)))
+
+# -- Settings > version and updates --
+v_busy = [False]
+
+def v_idle(text):
+    v_busy[0] = False; vbar.pack_forget(); vstat.config(text=" " + text.upper())
+    vbtn.config(text=f"UPDATE TO {update_found[0][0]}" if update_found[0] else "CHECK FOR UPDATES")
+
+def v_show(got, total):
+    if got >= 0 and not vbar.winfo_manager(): vbar.pack(anchor="w", pady=(0, 6), before=vbtn)
+    vstat.config(text=" " + progress_text(got, total))
+    vbar.coords(vfill, 0, 0, vbw * got // total if total and got >= 0 else 0, vbh)
+
+def v_check():
+    v_busy[0] = True; vstat.config(text=" CHECKING GITHUB...")
     def work():
-        import tempfile
-        new = os.path.join(tempfile.gettempdir(), "PixelPadDesk-update.exe")
-        if not ns.fetch_update(exe, sums, new, lambda g, t: root.after(0, show, g, t)):
-            root.after(0, lambda: (note.destroy(), messagebox.showerror("PixelPad Desk", "The update could not be downloaded or did not check out. Nothing was changed."))); return
-        try:
-            cmd = os.path.join(tempfile.gettempdir(), "pixelpad_update.cmd"); me = sys.executable
-            open(cmd, "w", newline="").write(f'@echo off\r\nset n=0\r\n:wait\r\nping 127.0.0.1 -n 2 >nul\r\nmove /y "{new}" "{me}" >nul 2>&1\r\nif errorlevel 1 (set /a n+=1 & if %n% lss 40 goto wait & exit /b 1)\r\nstart "" "{me}"\r\n(goto) 2>nul & del "%~f0"\r\n')
-            subprocess.Popen(["cmd", "/c", cmd], creationflags=0x08000000 | 0x00000008, close_fds=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)   # no window, detached
-            root.after(0, lambda: msg.config(text="  RESTARTING...  "))
-            root.after(0, quit_app)
-        except Exception:
-            root.after(0, lambda: (note.destroy(), messagebox.showerror("PixelPad Desk", "The update downloaded but could not be started. Nothing was changed.")))
+        r = ns.latest_release()
+        def done():
+            if r and ns.newer_version(r[0], VERSION): update_found[0] = r; v_idle(f"VERSION {r[0]} IS OUT")
+            elif r: update_found[0] = None; v_idle("YOU HAVE THE LATEST VERSION")
+            else: v_idle("COULDN'T REACH GITHUB. CHECK THE INTERNET AND TRY AGAIN")
+        root.after(0, done)
     threading.Thread(target=work, daemon=True).start()
+
+def v_click():
+    if v_busy[0]: return
+    if not update_found[0]: v_check(); return
+    ver, exe, sums, page = update_found[0]
+    if not (getattr(sys, "frozen", False) and exe):   # running from source: nothing to swap, so open the download page
+        import webbrowser; webbrowser.open(page or "https://github.com/nyx-ulrix/pixelpad/releases/latest"); return
+    v_busy[0] = True; vstat.config(text=" STARTING THE DOWNLOAD...")
+    do_update(exe, sums, v_show, v_idle)
+
+v_check()   # on start: also what offers the update prompt (the window asks once, when it is on screen)
 
 def quit_app():
     try:
