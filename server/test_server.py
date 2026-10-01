@@ -188,4 +188,93 @@ srv.area_mode, srv.custom = "custom", (100, 200, 640, 480)
 assert srv.area() == (100, 200, 640, 480)
 srv.area_mode, srv.monitor = "full", (1920, 0, 2560, 1440)
 assert srv.area() == (1920, 0, 2560, 1440)
+# ---- pairing: sealed frames (the app's side is written out here, as android/.../Seal.kt does it) ----
+import hashlib as _hl2, hmac as _hm
+KEY = bytes(range(16))
+
+class AppSeal:
+    def __init__(self, key=KEY, sid=b"\x01\x02\x03\x04"): self.key, self.sid, self.ctr, self.nonce = key, sid, 0, bytes(8)
+    def h(self, *p): return _hm.new(self.key, b"".join(p), _hl2.sha256).digest()
+    def seal(self, pt, discovery=False, ctr=None):
+        n = bytes(8) if discovery else self.nonce
+        c = (self.ctr if ctr is None else ctr).to_bytes(4, "little")
+        if ctr is None: self.ctr += 1
+        ct = bytes(a ^ b for a, b in zip(pt, self.h(b"E", n, self.sid, c)))
+        return b"\xA5" + self.sid + c + ct + self.h(b"T", n, b"\xA5", self.sid, c, ct)[:8]
+    def open(self, f):
+        assert len(f) == 37 and f[0] == 0xA6, f
+        n, c, ct, tag = f[1:9], f[9:13], f[13:29], f[29:37]
+        assert _hm.compare_digest(self.h(b"S", b"\xA6", n, c, ct)[:8], tag), "reply tag"
+        return n, bytes(a ^ b for a, b in zip(ct, self.h(b"R", n, c)))
+
+class FakeUdp:
+    """Feeds datagrams to Server.udp_loop and records what it sends back."""
+    def __init__(self, items): self.items, self.sent = list(items), []
+    def recvfrom(self, n):
+        if not self.items: raise OSError("done")
+        return self.items.pop(0)
+    def sendto(self, b, a): self.sent.append((b, a))
+
+def run_udp(items):
+    for k in list(srv.devices): srv.drop(k)
+    fu = FakeUdp(items); srv.usock = fu; srv.udp_loop(); return fu.sent
+
+srv.pair, srv.allow_legacy = ns.Pairing(KEY), False
+A, ADDR = AppSeal(), ("9.9.9.9", 4000)
+ping = pkt(3, x=4242)
+# an unauthenticated (plain) packet is refused: no reply, no player slot
+assert run_udp([(ping, ADDR)]) == [] and not srv.devices
+# a discovery ping is answered with this run's nonce, sealed, and creates nothing
+out = run_udp([(A.seal(ping, discovery=True), ADDR)])
+assert len(out) == 1 and not srv.devices
+nonce, pt = A.open(out[0][0]); assert nonce == srv.pair.nonce and pt[0] == 3 and struct.unpack("<i", pt[3:7])[0] == 4242
+A.nonce = nonce
+# only a ping may be sealed with the nonce 0 (a key press sealed that way, e.g. a replay with the nonce stripped, does nothing)
+keys.clear(); assert run_udp([(A.seal(pkt(6, 0x5A, 1, 0), discovery=True), ADDR)]) == [] and keys == [] and not srv.devices
+# a sealed ping with the real nonce creates the player and gets a sealed reply carrying the slot
+out = run_udp([(A.seal(ping), ADDR)]); assert len(out) == 1 and list(srv.devices) == [("udp",) + ADDR]
+assert A.open(out[0][0])[1][1] == 1, "slot in the sealed reply"
+# a sealed key press works; the same frame sent again (a replay) does nothing
+frame = A.seal(pkt(6, 0x5A, 1, 0)); keys.clear()
+run_udp_keep = lambda items: (setattr(srv, "usock", FakeUdp(items)), srv.udp_loop())
+run_udp_keep([(frame, ADDR)]); assert keys == [(0x11, False), (0x5A, False), (0x5A, True), (0x11, True)], keys
+keys.clear(); run_udp_keep([(frame, ADDR)]); assert keys == [], "replayed frame must not run twice"
+# a frame with a flipped bit, a wrong key, and one from another PC run are all dropped
+bad = bytearray(A.seal(pkt(6, 0x5A, 1, 0))); bad[12] ^= 1
+keys.clear(); run_udp_keep([(bytes(bad), ADDR)]); assert keys == []
+run_udp_keep([(AppSeal(bytes(16)).seal(pkt(6, 0x5A, 1, 0)), ADDR)]); assert keys == []
+old_run = AppSeal(); old_run.nonce = bytes(range(8)); run_udp_keep([(old_run.seal(pkt(6, 0x5A, 1, 0)), ADDR)]); assert keys == []
+# frames may arrive out of order within the window, but not twice
+f1, f2, f3 = A.seal(pkt(6, 0x5A, 1, 0)), A.seal(pkt(6, 0x5A, 1, 0)), A.seal(pkt(6, 0x5A, 1, 0))
+keys.clear(); run_udp_keep([(f3, ADDR), (f1, ADDR), (f2, ADDR), (f2, ADDR)]); assert len(keys) == 12, len(keys)
+# the sealed reply cannot be read without the key and is new each time
+r1 = A.open(run_udp([(A.seal(ping), ADDR)])[0][0]); r2 = A.open(run_udp([(A.seal(ping), ADDR)])[0][0]); assert r1[1][1] == 1
+# sealed TCP (USB): frames are read from the stream; a plain packet on a paired TCP link closes it
+class FakeTcp:
+    def __init__(self, data): self.data, self.out, self.closed = [data], b"", False
+    def setsockopt(self, *a): pass
+    def recv(self, n): return self.data.pop(0) if self.data else b""
+    def sendall(self, b): self.out += b
+    def close(self): self.closed = True
+for k in list(srv.devices): srv.drop(k)
+t = FakeTcp(A.seal(ping) + A.seal(pkt(6, 0x5A, 1, 0))[:10]); srv.serve_tcp(t, ("tcp", "127.0.0.1", 5)); assert len(t.out) == 37 and t.closed, len(t.out)
+t = FakeTcp(ping); srv.serve_tcp(t, ("tcp", "127.0.0.1", 6)); assert t.out == b"" and t.closed and not srv.devices
+# an old app (plain packets) works again when old apps are allowed
+srv.allow_legacy = True; assert len(run_udp([(ping, ADDR)])) == 1
+# the sealed key and a spoofed device cannot take player slots: five unauthenticated sources create nothing
+srv.allow_legacy = False
+assert run_udp([(ping, ("7.7.7.%d" % i, 1)) for i in range(5)]) == [] and not srv.devices
+for k in list(srv.devices): srv.drop(k)
+srv.pair, srv.allow_legacy = None, True
+
+# the update download needs a checksum, with a line for this exact file
+import pathlib as _pl2, tempfile as _tf2
+_d2 = _pl2.Path(_tf2.mkdtemp()); (_d2 / "x.exe").write_bytes(b"hello" * 1000); _out2 = str(_d2 / "got.exe")
+assert not ns.fetch_update((_d2 / "x.exe").as_uri(), None, _out2), "no checksum file: refused"
+(_d2 / "S.txt").write_text(_hl2.sha256(b"other").hexdigest() + "  y.exe\n")
+assert not ns.fetch_update((_d2 / "x.exe").as_uri(), (_d2 / "S.txt").as_uri(), _out2), "no line for this file: refused"
+(_d2 / "S.txt").write_text(_hl2.sha256(b"hello" * 1000).hexdigest() + "  evil-x.exe\n")
+assert not ns.fetch_update((_d2 / "x.exe").as_uri(), (_d2 / "S.txt").as_uri(), _out2), "a line for a differently named file: refused"
+(_d2 / "S.txt").write_text(_hl2.sha256(b"hello" * 1000).hexdigest() + "  x.exe\n")
+assert ns.fetch_update((_d2 / "x.exe").as_uri(), (_d2 / "S.txt").as_uri(), _out2) and os.path.getsize(_out2) == 5000
 print("all protocol checks passed")

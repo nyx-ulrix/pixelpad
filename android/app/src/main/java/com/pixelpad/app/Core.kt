@@ -40,7 +40,7 @@ object Themes {
 }
 
 /** A PC you have paired with. You choose its name; its address is kept so the app can reach it, but it is never shown. */
-class SavedPc(var name: String, var host: String, var port: Int)
+class SavedPc(var name: String, var host: String, var port: Int, var key: String = "")   // key: the pairing key from its QR code (32 hex digits), "" for an old PixelPad Desk without one
 
 /** Everything the user can change. Values are saved as soon as they are set, and the main screen reads them live. */
 /** A pen that shows up as a hardware keyboard (Xiaomi Focus Pen) makes Gboard hide its keys behind a small floating button, so ask for the keyboard outright. */
@@ -80,19 +80,28 @@ object Cfg {
         if (penButtons.isEmpty() && !prefs.getBoolean("penSeeded", false)) { resetPenButtons(); prefs.edit().putBoolean("penSeeded", true).apply() }
         runCatching {
             val a = JSONArray(prefs.getString("pcs", "[]"))
-            for (i in 0 until a.length()) a.getJSONObject(i).let { pcs.add(SavedPc(it.getString("name"), it.getString("host"), it.getInt("port"))) }
+            for (i in 0 until a.length()) a.getJSONObject(i).let { pcs.add(SavedPc(it.getString("name"), it.getString("host"), it.getInt("port"), it.optString("key"))) }
         }
         if (pcs.isEmpty() && host.isNotBlank()) { pcs.add(SavedPc("MY PC", host, port)); savePcs() }   // a PC saved before PCs had names
         if (!prefs.contains("fingerDraw")) fingerDraw = !hasStylus()   // first run: no stylus on this device = fingers may draw
         if (theme.toIntOrNull() == null) theme = (0 until 4).random().toString()   // first use, or the old "auto": pick one of the four player colours once; after that it only changes when you change it
     }
 
-    fun savePcs() = prefs.edit().putString("pcs", JSONArray().apply { pcs.forEach { put(JSONObject().put("name", it.name).put("host", it.host).put("port", it.port)) } }.toString()).apply()
+    fun savePcs() = prefs.edit().putString("pcs", JSONArray().apply { pcs.forEach { put(JSONObject().put("name", it.name).put("host", it.host).put("port", it.port).put("key", it.key)) } }.toString()).apply()
 
-    /** Saves a PC under the name you picked (or renames it if that address is already saved). */
-    fun addPc(name: String, host: String, port: Int): SavedPc {
+    /** Saves a PC under the name you picked (or renames it if that address is already saved). Null if the address or port can't be real.
+     *  key is its pairing key; an empty one leaves a saved key as it is. */
+    fun validAddress(host: String, port: Int): Boolean {
+        val h = host.trim().removeSurrounding("[", "]")
+        return h.isNotEmpty() && h.length <= 253 && h.all { it.isLetterOrDigit() || it == '.' || it == '-' || it == ':' } && port in 1..65535
+    }
+
+    fun addPc(name: String, host: String, port: Int, key: String = ""): SavedPc? {
+        val h = host.trim().removeSurrounding("[", "]")
+        if (!validAddress(h, port)) return null
+        val k = Seal.parse(key)?.let { Seal.hex(it) } ?: ""
         val n = name.trim().take(20).ifEmpty { "MY PC" }
-        val pc = pcs.firstOrNull { it.host == host && it.port == port }?.also { it.name = n } ?: SavedPc(n, host, port).also { pcs.add(it) }
+        val pc = pcs.firstOrNull { it.host == h && it.port == port }?.also { it.name = n; if (k.isNotEmpty()) it.key = k } ?: SavedPc(n, h, port, k).also { pcs.add(it) }
         savePcs(); return pc
     }
 
@@ -146,6 +155,7 @@ object Cfg {
     var transport by P("transport", "wifi")  // usb | wifi | bt (Wi-Fi with the QR code is the easy way in)
     var host by P("host", "")
     var port by P("port", 7777)
+    var usbKey by P("usbKey", "")            // the pairing key used over the USB cable (the last one you scanned or typed)
 
     // tablet: where the pen works on the tablet, and how it maps to the PC screen
     var tabletRel by P("tabletRel", false)   // relative (mouse-like) instead of absolute
@@ -326,7 +336,7 @@ object Core {
     fun visible(delta: Int) { onScreen = (onScreen + delta).coerceAtLeast(0); sender.active = onScreen > 0 }
 
     /** Points the sender at whatever the settings say. Call after any connection setting changes. */
-    fun applyConnection() { applyColour(); sender.configure(Cfg.transport != "usb", Cfg.host, Cfg.port) }
+    fun applyConnection() { applyColour(); val net = Cfg.transport != "usb"; sender.configure(net, Cfg.host, Cfg.port, if (net) Cfg.activePc()?.key ?: "" else Cfg.usbKey) }
 
     /** Hands this device's colour to the sender, which puts it in every heartbeat so the PC always shows the real one. */
     fun applyColour() { sender.colourIndex = Themes.index(Cfg.theme) }

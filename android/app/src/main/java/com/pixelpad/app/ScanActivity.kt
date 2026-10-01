@@ -161,12 +161,18 @@ class ScanActivity : Activity() {
     private fun handleCode(text: String) {
         if (waiting) return
         if (!text.startsWith("pixelpad://")) { say("THAT QR CODE IS NOT FROM PIXELPAD DESK", true); return }
-        // pixelpad://<address>:<port>?name=<the name chosen in PixelPad Desk>
-        val body = text.removePrefix("pixelpad://"); val addr = body.substringBefore("?")
-        val ip = addr.substringBefore(":"); val port = addr.substringAfter(":", "7777").toIntOrNull() ?: 7777
-        val qrName = runCatching { java.net.URLDecoder.decode(body.substringAfter("?name=", "").substringBefore("&"), "UTF-8") }.getOrDefault("").trim()
+        // pixelpad://<address>:<port>?name=<the name chosen in PixelPad Desk>&k=<its pairing key, 32 hex digits>
+        val body = text.removePrefix("pixelpad://"); val addr = body.substringBefore("?"); val query = body.substringAfter("?", "")
+        fun param(n: String) = query.split("&").firstOrNull { it.startsWith("$n=") }?.substringAfter("=") ?: ""
+        val v6 = addr.startsWith("[")
+        val ip = (if (v6) addr.substringBefore("]").removePrefix("[") else addr.substringBefore(":")).trim()
+        val portText = (if (v6) addr.substringAfter("]:", "7777") else addr.substringAfter(":", "7777"))
+        val port = portText.toIntOrNull() ?: 0
+        val qrName = runCatching { java.net.URLDecoder.decode(param("name"), "UTF-8") }.getOrDefault("").trim()
+        val key = Seal.parse(param("k"))?.let { Seal.hex(it) } ?: ""
+        if (!Cfg.validAddress(ip, port)) { say("THAT QR CODE'S ADDRESS ISN'T VALID", true); return }
         val known = Cfg.pcs.firstOrNull { it.host == ip && it.port == port }
-        if (known != null) { connectTo(known); return }          // already saved: just connect
+        if (known != null) { if (key.isNotEmpty()) { known.key = key; Cfg.savePcs(); Cfg.usbKey = key }; connectTo(known); return }          // already saved: just connect
         waiting = true
         val field = EditText(this).apply {
             typeface = mono; setTextColor(INK); textSize = 14f; setSingleLine(); setText(qrName.ifEmpty { "MY PC" }.take(20)); selectAll()
@@ -174,10 +180,17 @@ class ScanActivity : Activity() {
         }
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(14), dp(16), dp(8)); background = shape(PAPER, dp(4))
-            addView(label("NAME THIS PC", 12f)); addView(space(6)); addView(field)
+            addView(label("NAME THIS PC", 12f)); addView(space(6)); addView(field); addView(space(8))
+            // the address is shown here once, so you can see where this app will send its input (it is never shown again)
+            addView(label("THE APP WILL SEND TO " + (if (port == 7777) ip else "$ip:$port"), 10f))
+            addView(label(if (key.isNotEmpty()) "PAIRED: EVERYTHING IS SIGNED AND ENCRYPTED" else "NOT PAIRED (AN OLD PIXELPAD DESK): ANYONE ON THE NETWORK COULD CONTROL THE PC. UPDATE PIXELPAD DESK.", 10f, if (key.isEmpty()) WARN else INK))
         }
         AlertDialog.Builder(this).setView(box)
-            .setPositiveButton("SAVE") { _, _ -> connectTo(Cfg.addPc(field.text.toString(), ip, port)) }
+            .setPositiveButton("SAVE") { _, _ ->
+                val pc = Cfg.addPc(field.text.toString(), ip, port, key)
+                if (pc == null) { say("THAT QR CODE'S ADDRESS ISN'T VALID", true); waiting = false }
+                else { if (key.isNotEmpty()) Cfg.usbKey = key; connectTo(pc) }
+            }
             .setNegativeButton("CANCEL") { _, _ -> waiting = false }
             .setOnCancelListener { waiting = false }.show()
     }

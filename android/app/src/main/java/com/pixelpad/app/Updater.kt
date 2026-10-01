@@ -16,6 +16,7 @@ import java.net.URL
 
 /** Looks for a newer PixelPad release on GitHub and installs it (Android asks you to confirm the install). */
 object Updater {
+    private const val MAX_APK = 100L shl 20   // the app is about 1 MB: refuse anything absurd
     private const val API = "https://api.github.com/repos/nyx-ulrix/pixelpad/releases/latest"
 
     class Release(val version: String, val apkUrl: String)
@@ -45,7 +46,10 @@ object Updater {
             val j = JSONObject(c.inputStream.bufferedReader().readText())
             val assets = j.getJSONArray("assets")
             var apk: String? = null
-            for (i in 0 until assets.length()) assets.getJSONObject(i).let { if (it.getString("name").endsWith(".apk")) apk = it.getString("browser_download_url") }
+            for (i in 0 until assets.length()) assets.getJSONObject(i).let {
+                val url = it.getString("browser_download_url")
+                if (it.getString("name").endsWith(".apk") && url.startsWith("https://github.com/nyx-ulrix/pixelpad/releases/download/")) apk = url   // only this project's own release files
+            }
             apk?.let { Release(j.getString("tag_name").removePrefix("v"), it) }
         }
     } catch (e: Exception) { null }
@@ -71,12 +75,14 @@ object Updater {
                     val conn = URL(r.apkUrl).openConnection() as HttpURLConnection
                     conn.connectTimeout = 10000; conn.readTimeout = 20000; conn.setRequestProperty("User-Agent", "PixelPad")
                     val total = conn.contentLengthLong
+                    if (conn.responseCode != 200 || total > MAX_APK) throw java.io.IOException("bad download")
                     s.openWrite("pixelpad.apk", 0, total).use { out ->
                         val buf = ByteArray(32 * 1024); var got = 0L; var shown = 0L
                         conn.inputStream.use { inp ->
                             while (true) {
                                 val n = inp.read(buf); if (n < 0) break
                                 out.write(buf, 0, n); got += n
+                                if (got > MAX_APK) throw java.io.IOException("too big")
                                 if (got - shown >= 32 * 1024) { shown = got; val g = got; a.runOnUiThread { onProgress(g, total) } }
                             }
                         }

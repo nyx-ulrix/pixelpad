@@ -10,13 +10,14 @@ Modes: 0 trackpad, 1 tablet, 2 controller, 3 ping, 4 hello, 6 key (action = virt
        9 record (tablet -> PC: action 1 = listen for one shortcut on the PC keyboard, 0 = cancel; PC -> tablet: action = virtual key,
        buttons = modifiers, x = 1 recorded / 2 nothing / 3 recording is switched off)
 """
-import argparse, ctypes, hashlib, heapq, json, os, re, shutil, socket, struct, subprocess, threading, time, urllib.request
+import argparse, collections, ctypes, hashlib, heapq, hmac, json, os, re, shutil, socket, struct, subprocess, threading, time, urllib.request
 from ctypes import wintypes as w
 
 log = print  # the desktop app swaps this for its own log window
 PEN_FMT, PAD_FMT, SIZE = "<BBBiiHbbB", "<BHbbbbBB7x", 16
 TRACKPAD, TABLET, CONTROLLER, PING, HELLO, KEY, CONFIG, TOUCH, REC = 0, 1, 2, 3, 4, 6, 7, 8, 9
 MAX_DEVICES = 4
+FRAME_IN, FRAME_OUT, MARK_IN, MARK_OUT = 33, 37, 0xA5, 0xA6   # sealed packets: app -> PC, PC -> app (see class Pairing)
 u32 = ctypes.windll.user32
 u32.SetProcessDPIAware()
 
@@ -327,6 +328,53 @@ class Pad:
         p.left_trigger(lt); p.right_trigger(rt)
         p.update()
 
+# ---------- pairing: sealed packets ----------
+class Pairing:
+    """Pairing security. The Desk shows a pairing key (QR code); with it every 16-byte packet travels in a sealed frame, so nobody else on the
+    network or the USB tunnel can send input to this PC, read what is sent, or replay a recording of it.
+      app -> PC (33 bytes): 0xA5, session id (4), counter (4), packet XOR keystream (16), tag (8)
+      PC -> app (37 bytes): 0xA6, this run's nonce (8), counter (4), packet XOR keystream (16), tag (8)
+    The keystream and the tag are HMAC-SHA256 of the key over a label, the nonce and the counters (the tag covers the encrypted packet and is cut
+    to 8 bytes). The nonce is new every time the Desk starts, so nothing recorded earlier works; a counter per session id makes a frame usable once
+    (sliding window of 64, for UDP reordering). An app learns the nonce from a reply to a "discovery" ping, sealed with the nonce 0, which is only
+    ever accepted for a ping and creates nothing. The same scheme in Kotlin is android/.../Seal.kt: change them together."""
+    def __init__(self, key):
+        self.key, self.nonce, self.rc = bytes(key), os.urandom(8), 0
+        self.sessions, self.lock = collections.OrderedDict(), threading.Lock()
+
+    def _h(self, *parts): return hmac.new(self.key, b"".join(parts), hashlib.sha256).digest()
+
+    def open(self, f):
+        """(16-byte packet, is_discovery) for a genuine, new frame from an app, else None."""
+        if len(f) != FRAME_IN or f[0] != MARK_IN: return None
+        sid, ctr, ct, tag = f[1:5], f[5:9], f[9:25], f[25:33]
+        for nonce, disc in ((self.nonce, False), (bytes(8), True)):
+            if hmac.compare_digest(self._h(b"T", nonce, f[:1], sid, ctr, ct)[:8], tag): break
+        else: return None
+        pt = bytes(a ^ b for a, b in zip(ct, self._h(b"E", nonce, sid, ctr)))
+        if disc: return (pt, True) if pt[0] == PING else None   # nothing but a ping may be sealed with the nonce 0, and it changes no state
+        return (pt, False) if self._fresh(int.from_bytes(sid, "little"), int.from_bytes(ctr, "little")) else None
+
+    def _fresh(self, sid, c):
+        with self.lock:
+            st = self.sessions.get(sid)
+            if st is None:
+                if len(self.sessions) >= 16: self.sessions.popitem(last=False)
+                self.sessions[sid] = [c, 1]; return True
+            self.sessions.move_to_end(sid)
+            top, bits = st
+            if c > top:
+                st[1] = ((bits << (c - top)) | 1) & (2 ** 64 - 1) if c - top < 64 else 1; st[0] = c; return True
+            gap = top - c
+            if gap >= 64 or bits >> gap & 1: return False   # too old, or already seen: a replay
+            st[1] = bits | 1 << gap; return True
+
+    def seal(self, pt):
+        """A 16-byte packet for the app as a 37-byte sealed frame."""
+        with self.lock: self.rc = (self.rc + 1) & 0xFFFFFFFF; rc = self.rc.to_bytes(4, "little")
+        ct = bytes(a ^ b for a, b in zip(pt, self._h(b"R", self.nonce, rc)))
+        return bytes([MARK_OUT]) + self.nonce + rc + ct + self._h(b"S", bytes([MARK_OUT]), self.nonce, rc, ct)[:8]
+
 # ---------- plumbing ----------
 class Device:
     """One connected phone/tablet. Each gets a player slot (1-4) and its own virtual controller."""
@@ -335,6 +383,7 @@ class Device:
         self.mode, self.phone, self.rtt_us, self.count, self.pen, self.pad = None, None, None, 0, None, None
         self.held = set()  # keys the tablet is holding down
         self.reply, self.rlock = None, threading.Lock()
+        self.sealer = None  # set when this device talks sealed: replies are then sealed too
         self.play_t = 0.0  # when the last pen packet is due to be played
         self.last_pad = None  # the last controller packet, so an unchanged one is not sent to ViGEm again
         self.touch, self.touch_failed = None, False
@@ -345,7 +394,7 @@ class Device:
     def send(self, b):
         """Sends a packet back to this tablet (replies can come from more than one thread)."""
         with self.rlock:
-            if self.reply: self.reply(b)
+            if self.reply: self.reply(self.sealer(b) if self.sealer else b)
 
 class Playout:
     """Replays pen packets with the spacing the tablet measured (the last byte), after a small fixed delay. Wi-Fi delivers packets
@@ -385,6 +434,7 @@ class Server:
         self.last_error, self.bind_errors, self.udp_ok, self.tcp_ok = "", [], False, False
         self.port, self.tsock, self.usock = None, None, None
         self.recorder, self.allow_record = KeyRecorder(), False   # off until switched on in the Desk: it listens to this keyboard
+        self.pair, self.allow_legacy, self._warned = None, True, 0.0   # pair: set by the Desk. Without it (or with allow_legacy) plain 16-byte packets are accepted as before
         self.smooth_ms = 20; self.play = Playout(self)   # pen packets are replayed with the tablet's own spacing after this delay
         self.ring = {"on": True, "size": 90, "style": 0, "color": 0, "thick": 3}  # the pen cursor ring; the tablet can change it too
         threading.Thread(target=self.reaper, daemon=True).start()
@@ -467,16 +517,29 @@ class Server:
         return self.area()[2] / (phone[0] if phone else 1000) * self.speed
 
     # -- packets --
-    def handle(self, d, reply, key_, transport):
+    def _pong(self, d, slot):
+        aw, ah = self.area()[2:]
+        out = bytearray(d); out[1] = slot; out[7:11] = struct.pack("<I", (min(aw, 65535) << 16) | min(ah, 65535)); return bytes(out)
+
+    def discover(self, d, key_, reply):
+        """A discovery ping (sealed with the nonce 0): answer it so the app learns this run's nonce. Nothing is created and nothing changes."""
+        dev = self.devices.get(key_)
+        reply(self.pair.seal(self._pong(d, dev.slot if dev else 0)))
+
+    def refuse_plain(self):
+        if time.time() - self._warned > 30:
+            self._warned = time.time()
+            log("a device without a pairing key tried to connect and was refused. Update PixelPad on it and scan the QR code again, or turn on ALLOW OLD APPS in Settings (not safe).")
+
+    def handle(self, d, reply, key_, transport, secure=False):
         dev = self.device(key_, transport)
         if not dev: return
-        dev.last_seen = time.time(); dev.reply = reply
+        dev.last_seen = time.time(); dev.reply = reply; dev.sealer = self.pair.seal if secure and self.pair else None
         mode = d[0]
         if mode == PING:
             dev.rtt_us = struct.unpack(PEN_FMT, d)[4]
             if 1 <= d[13] <= 16: dev.colour = d[13] - 1   # the phone's own colour rides in every ping (its tilt-x byte); we only record it
-            aw, ah = self.area()[2:]
-            out = bytearray(d); out[1] = dev.slot; out[7:11] = struct.pack("<I", (min(aw, 65535) << 16) | min(ah, 65535)); dev.send(bytes(out)); return
+            dev.send(self._pong(d, dev.slot)); return
         if mode == HELLO:
             x, y = struct.unpack(PEN_FMT, d)[3:5]
             if x > 0 and y > 0: dev.phone = (x, y)
@@ -526,7 +589,8 @@ class Server:
                 if mode != dev.mode:
                     if dev.mode == TABLET and dev.pen: dev.pen.send(3, 0, 0, 0, 0, 0, 0)
                     dev.mode = mode
-                    log(f"player {dev.slot} mode:", ["trackpad", "tablet", "controller"][mode] if mode < 3 else mode)
+                    if time.time() - getattr(dev, "_modelog", 0) > 1:   # at most once a second, so a flood of mode changes can't flood the log
+                        dev._modelog = time.time(); log(f"player {dev.slot} mode:", ["trackpad", "tablet", "controller"][mode] if mode < 3 else mode)
                 if mode == TRACKPAD:
                     _, a, _, x, y, *_ = struct.unpack(PEN_FMT, d)
                     trackpad(a, x, y)
@@ -558,9 +622,15 @@ class Server:
             try: d, addr = s.recvfrom(64)
             except ConnectionResetError: continue  # Windows reports a closed phone socket this way; it is not fatal
             except OSError: return
-            if len(d) == SIZE:
-                try: self.handle(d, lambda b, a=addr: s.sendto(b, a), ("udp",) + addr, "wifi")
-                except Exception as e: self.last_error = str(e)
+            try:
+                if len(d) == SIZE:   # a plain, unauthenticated packet: only from an old app, and only if allowed
+                    if self.pair and not self.allow_legacy: self.refuse_plain(); continue
+                    self.handle(d, lambda b, a=addr: s.sendto(b, a), ("udp",) + addr, "wifi")
+                elif len(d) == FRAME_IN and self.pair and (o := self.pair.open(d)):
+                    key_, reply = ("udp",) + addr, lambda b, a=addr: s.sendto(b, a)
+                    if o[1]: self.discover(o[0], key_, reply)
+                    else: self.handle(o[0], reply, key_, "wifi", True)
+            except Exception as e: self.last_error = str(e)
 
     def tcp_loop(self):
         while True:
@@ -575,12 +645,28 @@ class Server:
         try:
             while (r := c.recv(4096)):
                 buf += r
-                while len(buf) >= SIZE: self.handle(buf[:SIZE], c.sendall, key_, "usb"); buf = buf[SIZE:]
-        except OSError: pass
-        self.drop(key_)
+                while buf:
+                    if buf[0] == MARK_IN and self.pair:   # a sealed frame (a plain packet never starts with this byte)
+                        if len(buf) < FRAME_IN: break
+                        f, buf = buf[:FRAME_IN], buf[FRAME_IN:]
+                        if not (o := self.pair.open(f)): continue
+                        if o[1]: self.discover(o[0], key_, c.sendall)
+                        else: self.handle(o[0], c.sendall, key_, "usb", True)
+                    else:
+                        if self.pair and not self.allow_legacy: self.refuse_plain(); return
+                        if len(buf) < SIZE: break
+                        self.handle(buf[:SIZE], c.sendall, key_, "usb"); buf = buf[SIZE:]
+        except Exception: pass   # a dead connection or anything odd ends this connection only
+        finally:
+            self.drop(key_)
+            try: c.close()
+            except OSError: pass
 
 # ---------- updates: the latest release on GitHub ----------
-RELEASES = "https://api.github.com/repos/nyx-ulrix/pixelpad/releases/latest"
+REPO = "nyx-ulrix/pixelpad"
+RELEASES = f"https://api.github.com/repos/{REPO}/releases/latest"
+DOWNLOADS = f"https://github.com/{REPO}/releases/download/"
+MAX_EXE = 100 << 20   # the exe is about 35 MB: refuse anything absurd
 
 def newer_version(a, b):
     """Is version a newer than b? Compared number by number, so 1.1.10 is newer than 1.1.9."""
@@ -588,31 +674,42 @@ def newer_version(a, b):
     n = max(len(pa), len(pb)); return pa + [0] * (n - len(pa)) > pb + [0] * (n - len(pb))
 
 def latest_release():
-    """(version, exe download url, checksums url, release page) of the newest GitHub release, or None if it can't be read."""
+    """(version, exe download url, checksums url, release page) of the newest GitHub release, or None if it can't be read. Only this project's own
+    release files count, and without a published checksum file there is no exe to swap in (the page is offered instead)."""
     try:
         req = urllib.request.Request(RELEASES, headers={"Accept": "application/vnd.github+json", "User-Agent": "PixelPadDesk"})
         with urllib.request.urlopen(req, timeout=6) as r: j = json.load(r)
-        urls = {a["name"]: a["browser_download_url"] for a in j.get("assets", [])}
-        exe = next((u for n, u in urls.items() if n.lower().endswith(".exe")), None)
-        return j["tag_name"].lstrip("v"), exe, urls.get("SHA256SUMS.txt"), j.get("html_url")
+        ver = j["tag_name"].lstrip("v")
+        urls = {a["name"]: a["browser_download_url"] for a in j.get("assets", []) if str(a.get("browser_download_url", "")).startswith(DOWNLOADS)}
+        exe, sums = urls.get(f"PixelPadDesk-{ver}.exe"), urls.get("SHA256SUMS.txt")
+        if not sums: exe = None
+        page = j.get("html_url") if str(j.get("html_url", "")).startswith(f"https://github.com/{REPO}/") else None
+        return ver, exe, sums, page
     except Exception: return None
 
 def fetch_update(exe_url, sums_url, dest, progress=None):
-    """Downloads the new exe to dest and checks it against the release's checksum file. Returns True only if it is intact.
-    progress(bytes so far, total bytes or 0) is called as it downloads (from this thread), about ten times a second."""
+    """Downloads the new exe to dest and checks it against the release's checksum file. Returns True only if it is intact: a missing checksum file,
+    a missing line for this exe, a bad hash, an oversized file or a plain-http redirect all fail. progress(bytes so far, total or 0) is called
+    from this thread about ten times a second."""
     try:
         req = lambda u: urllib.request.Request(u, headers={"User-Agent": "PixelPadDesk"})
+        if not sums_url: return False
+        name = os.path.basename(exe_url.split("?")[0])
+        with urllib.request.urlopen(req(sums_url), timeout=15) as r: sums = r.read(1 << 16).decode("utf-8", "replace")
+        want = next((p[0].lower() for l in sums.splitlines() if len(p := l.split()) == 2 and p[1].lstrip("*") == name), "")
+        if not re.fullmatch(r"[0-9a-f]{64}", want): return False
         h = hashlib.sha256()
         with urllib.request.urlopen(req(exe_url), timeout=30) as r, open(dest, "wb") as f:
+            if r.geturl().startswith("http://"): raise ValueError("insecure redirect")
             total, got, shown = int(r.headers.get("Content-Length") or 0), 0, 0.0
+            if total > MAX_EXE: raise ValueError("too big")
             while chunk := r.read(1 << 16):
-                f.write(chunk); h.update(chunk); got += len(chunk)
+                got += len(chunk)
+                if got > MAX_EXE: raise ValueError("too big")
+                f.write(chunk); h.update(chunk)
                 if progress and time.time() - shown > 0.1: shown = time.time(); progress(got, total)
             if progress: progress(got, total or got)
-        if sums_url:
-            with urllib.request.urlopen(req(sums_url), timeout=15) as r: sums = r.read().decode("utf-8", "replace")
-            want = next((l.split()[0] for l in sums.splitlines() if l.strip().endswith(os.path.basename(exe_url.split("?")[0]))), None)
-            if want and want.lower() != h.hexdigest(): os.remove(dest); return False
+        if h.hexdigest() != want: os.remove(dest); return False
         return True
     except Exception:
         try: os.remove(dest)
@@ -621,9 +718,12 @@ def fetch_update(exe_url, sums_url, dest, progress=None):
 
 PHONE_PORT = 7777  # the port the phone dials on itself; adb reverse forwards it to whichever port the PC found
 
+SYS32 = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32")
+
 def adb_path():
-    return shutil.which("adb") or next((p for p in [os.path.join(os.environ.get("ANDROID_HOME", ""), "platform-tools", "adb.exe"),
-                                                    os.path.join(os.environ.get("LOCALAPPDATA", ""), "Android", "Sdk", "platform-tools", "adb.exe")] if os.path.exists(p)), None)
+    """adb.exe from the SDK folders or PATH, but never from the current folder (shutil.which would look there first)."""
+    dirs = [os.path.join(os.environ.get("ANDROID_HOME", ""), "platform-tools"), os.path.join(os.environ.get("LOCALAPPDATA", ""), "Android", "Sdk", "platform-tools")] + os.environ.get("PATH", "").split(os.pathsep)
+    return next((p for d in dirs if d and os.path.isabs(d) for p in [os.path.join(d, "adb.exe")] if os.path.isfile(p)), None)
 
 def adb(*args):
     p = adb_path()
@@ -676,13 +776,15 @@ def diagnose(srv, port):
     r.append(("ok" if dev else "fail", "PEN DEVICE READY (TABLET MODE)" if dev else "PEN DEVICE UNAVAILABLE", "Tablet mode needs Windows 10 version 1809 or newer."))
     if time.time() - _vig[0] > 30:   # the driver doesn't come and go: ask at most every 30 s
         _vig[0] = time.time()
-        _vig[1] = "RUNNING" in subprocess.run(["sc", "query", "ViGEmBus"], capture_output=True, text=True, creationflags=0x08000000).stdout
+        _vig[1] = "RUNNING" in subprocess.run([os.path.join(SYS32, "sc.exe"), "query", "ViGEmBus"], capture_output=True, text=True, creationflags=0x08000000).stdout
     vg = _vig[1]
     r.append(("ok" if vg else "warn", "CONTROLLER DRIVER READY" if vg else "CONTROLLER DRIVER NOT INSTALLED",
               "Only needed for controller mode. Install ViGEmBus from github.com/nefarius/ViGEmBus/releases."))
     devs = list(srv.devices.values())
     if devs: r.append(("ok", f"{len(devs)} DEVICE(S) TALKING TO THIS PC", ""))
     else: r.append(("fail", "NOTHING RECEIVED FROM THE CONTROLLER DEVICE", "Open PixelPad on the controller device and check Settings > Connection. Over Wi-Fi/Bluetooth: scan the QR code, and allow PixelPad Desk through Windows Firewall."))
+    if srv.pair and srv._warned and time.time() - srv._warned < 120:
+        r.append(("warn", "A DEVICE WITHOUT A PAIRING KEY WAS REFUSED", "Update PixelPad on it and scan the QR code again, or turn on ALLOW OLD APPS in Settings (not safe)."))
     if srv.last_error: r.append(("warn", "LAST ERROR: " + srv.last_error.upper(), ""))
     how = "WI-FI" if wifi_only else "USB" if devs and all(d.transport == "usb" for d in devs) else "USB + WI-FI"
     r.insert(0, ("ok", f"CONNECTED: {len(devs)} DEVICE(S) OVER {how}", "") if devs else ("warn", "WAITING FOR A CONTROLLER DEVICE", ""))

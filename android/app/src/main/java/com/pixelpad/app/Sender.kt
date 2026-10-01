@@ -20,13 +20,16 @@ private const val HELLO = 4
 
 class Stats(val connected: Boolean, val avgUs: Long, val minUs: Long, val maxUs: Long, val rate: Int)
 
-/** Sends 16-byte packets to the PC: TCP over USB (via adb reverse), UDP over Wi-Fi / Bluetooth tethering. */
+/** Sends 16-byte packets to the PC: TCP over USB (via adb reverse), UDP over Wi-Fi / Bluetooth tethering. With a pairing key (see Seal.kt) every
+ *  packet travels sealed (signed and encrypted) and only sealed replies from the PC are believed; without one it speaks the old plain protocol. */
 class Sender(private val usbPort: Int = 7777) {
     private val q = LinkedBlockingQueue<ByteArray>()
     @Volatile private var wifi = false
     @Volatile private var host = ""
     @Volatile private var port = 7777 // the PC's port for Wi-Fi / Bluetooth; USB always dials the same local port
     @Volatile private var dirty = true
+    @Volatile private var seal: Seal? = null
+    private var keyHex = ""
 
     private val sent = AtomicInteger()
     private val rtts = LongArray(20) // last 20 round trips in microseconds
@@ -51,11 +54,16 @@ class Sender(private val usbPort: Int = 7777) {
     fun startRecord() = pen(9, 1, 0, 0, 0)
     fun cancelRecord() = pen(9, 0, 0, 0, 0)
 
-    fun configure(wifi: Boolean, host: String, port: Int) {
-        val changed = wifi != this.wifi || host != this.host || port != this.port
+    fun configure(wifi: Boolean, host: String, port: Int, key: String = "") {
+        val k = Seal.parse(key)
+        val newHex = k?.let { Seal.hex(it) } ?: ""
+        val changed = wifi != this.wifi || host != this.host || port != this.port || newHex != keyHex
+        if (newHex != keyHex) { keyHex = newHex; seal = k?.let { Seal(it) } }
         this.wifi = wifi; this.host = host; this.port = port
         if (changed) reconnect()
     }
+    /** True when this connection is sealed with a pairing key. */
+    fun paired() = seal != null
     fun reconnect() { dirty = true; lastError = ""; lastPong = 0 }
     fun connected() = System.nanoTime() - lastPong < 2_000_000_000L
     fun rttUs() = lastRttUs
@@ -108,8 +116,22 @@ class Sender(private val usbPort: Int = 7777) {
         if (us < 0) return
         synchronized(rtts) { rtts[rttN++ % rtts.size] = us.toLong() }
         val scr = ByteBuffer.wrap(b).order(ByteOrder.LITTLE_ENDIAN).getInt(7)
-        if (scr != 0) { screenW = scr ushr 16; screenH = scr and 0xFFFF; if (Cfg.pcW != screenW || Cfg.pcH != screenH) { Cfg.pcW = screenW; Cfg.pcH = screenH } }
-        lastRttUs = us; slot = b[1].toInt(); lastError = ""; lastPong = System.nanoTime()
+        val sw = scr ushr 16; val sh = scr and 0xFFFF
+        if (sw in 1..65535 && sh in 1..65535) { screenW = sw; screenH = sh; if (Cfg.pcW != sw || Cfg.pcH != sh) { Cfg.pcW = sw; Cfg.pcH = sh } }
+        lastRttUs = us; slot = (b[1].toInt() and 255).coerceIn(0, 4); lastError = ""; lastPong = System.nanoTime()
+    }
+
+    /** A reply is a fresh answer to a ping we sent in the last few seconds (its echoed timestamp is recent). */
+    private fun freshPing(b: ByteArray): Boolean {
+        if (b[0].toInt() != PING) return false
+        val age = nowUs() - ByteBuffer.wrap(b).order(ByteOrder.LITTLE_ENDIAN).getInt(3)
+        return age in 0..5_000_000
+    }
+
+    /** The packet inside what the PC sent, or null if it can't be trusted (not sealed when we are paired, forged, replayed, a stray 16 bytes). */
+    private fun decode(raw: ByteArray): ByteArray? {
+        val sl = seal
+        return if (sl != null) sl.open(raw) { freshPing(it) } else if (raw.size == 16) raw else null
     }
 
     fun stats(): Stats {
@@ -125,7 +147,7 @@ class Sender(private val usbPort: Int = 7777) {
     private fun reader(read: () -> ByteArray?) = Thread {
         try {
             while (true) {
-                val b = read() ?: break
+                val b = decode(read() ?: break) ?: continue
                 if (b[0].toInt() == PING) onPong(b)
                 else if (b[0].toInt() == 9) recordListener?.invoke(b[1].toInt() and 255, b[2].toInt() and 255, ByteBuffer.wrap(b).order(ByteOrder.LITTLE_ENDIAN).getInt(3))
             }
@@ -139,6 +161,7 @@ class Sender(private val usbPort: Int = 7777) {
                 Thread.sleep(500)
                 if (!active) { dirty = true; continue }   // nothing on screen: stay quiet
                 val c = connected(); if (c && !wasConnected) { syncRing(); syncSmooth() }; wasConnected = c
+                if (!c) seal?.forget()   // no answer: the PC may have restarted, so ask again with a discovery ping
                 val now = System.nanoTime(); val n = sent.get()
                 rate = ((n - lastSent) * 1e9 / (now - lastAt)).toInt(); lastSent = n; lastAt = now
                 if (++beat % 4 == 0) Log.d("PixelPad", "link ${if (wifi) "udp" else "usb tcp"} connected=$c sent=$n rtt=${lastRttUs}us queue=${q.size} error='$lastError'")
@@ -158,20 +181,32 @@ class Sender(private val usbPort: Int = 7777) {
                     if (dirty) { dirty = false; tcp?.close(); tcp = null; udp?.close(); udp = null; addr = null; lastPong = 0 }
                     if (p[0].toInt() == PING) ByteBuffer.wrap(p).order(ByteOrder.LITTLE_ENDIAN).putInt(3, nowUs()) // stamp at send time
                     else if (p[0].toInt() != HELLO) sent.incrementAndGet()
+                    val sl = seal
+                    val unknown = sl != null && sl.nonce.all { it.toInt() == 0 }   // paired, but this PC run's nonce isn't known yet: only discovery pings can go out
+                    if (unknown && p[0].toInt() != PING) continue
+                    val out = sl?.seal(p, discovery = unknown) ?: p
                     if (wifi) {
                         val a = addr ?: InetAddress.getByName(host).also { addr = it }
+                        val pcPort = port
                         val s = udp ?: DatagramSocket().also { ns ->
                             udp = ns
-                            reader { val r = DatagramPacket(ByteArray(16), 16); ns.receive(r); r.data }
+                            reader {   // only datagrams from the PC we talk to (address and port), so nobody else can answer for it
+                                val r = DatagramPacket(ByteArray(64), 64)
+                                do { r.length = 64; ns.receive(r) } while (r.address != a || r.port != pcPort)
+                                r.data.copyOf(r.length)
+                            }
                         }
-                        s.send(DatagramPacket(p, p.size, a, port))
+                        s.send(DatagramPacket(out, out.size, a, port))
                     } else {
                         val s = tcp ?: Socket().apply { tcpNoDelay = true; connect(InetSocketAddress("127.0.0.1", usbPort), 300) }.also { ns ->
                             tcp = ns
                             val inp = DataInputStream(ns.getInputStream())
-                            reader { ByteArray(16).also { inp.readFully(it) } }
+                            reader {
+                                val first = inp.readUnsignedByte()
+                                ByteArray(if (first == 0xA6) 37 else 16).also { it[0] = first.toByte(); inp.readFully(it, 1, it.size - 1) }
+                            }
                         }
-                        s.getOutputStream().write(p)
+                        s.getOutputStream().write(out)
                     }
                 } catch (e: Exception) { fail(e); retryAt = System.nanoTime() + 500_000_000L; tcp?.close(); tcp = null; udp?.close(); udp = null; addr = null }
             }

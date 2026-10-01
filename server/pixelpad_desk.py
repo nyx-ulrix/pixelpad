@@ -1,6 +1,6 @@
 """PixelPad Desk: window app for the PC side of PixelPad (retro pixel style)."""
-VERSION = "1.2.3"   # keep in step with versionName in android/app/build.gradle.kts (test_server.py checks), and with the release tag
-import ctypes, functools, json, math, os, socket, subprocess, sys, threading, time, tkinter as tk
+VERSION = "1.3.0"   # keep in step with versionName in android/app/build.gradle.kts (test_server.py checks), and with the release tag
+import ctypes, functools, json, math, os, re, secrets, socket, subprocess, sys, threading, time, tkinter as tk
 from urllib.parse import quote
 from tkinter import scrolledtext
 import segno
@@ -13,13 +13,26 @@ def res(name):
     base = getattr(sys, "_MEIPASS", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets"))
     return os.path.join(base, name)
 
-# one copy at a time: a second launch just brings the first one back
-_lock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-try:
-    _lock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1); _lock.bind(("127.0.0.1", 47771))
-except OSError:
+# one copy at a time: a second launch just brings the first one back. A named mutex decides (unlike a port, nobody can squat it); the loopback
+# port is only how the second copy tells the first to show itself. After an update the new copy waits for the old one to leave.
+_k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+_k32.CreateMutexW.restype = ctypes.c_void_p; _k32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p]
+_k32.CloseHandle.argtypes = [ctypes.c_void_p]
+def _first_copy():
+    h = _k32.CreateMutexW(None, 0, "Local\\PixelPadDesk")
+    if ctypes.get_last_error() != 183: return h or True   # 183 = ERROR_ALREADY_EXISTS
+    _k32.CloseHandle(h); return None
+_mutex = _first_copy()
+if not _mutex and "--updated" in sys.argv:
+    for _ in range(40):
+        time.sleep(0.5); _mutex = _first_copy()
+        if _mutex: break
+if not _mutex:
     try: socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(b"show", ("127.0.0.1", 47771))
     finally: sys.exit(0)
+_lock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+try: _lock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1); _lock.bind(("127.0.0.1", 47771))
+except OSError: _lock = None   # something else has the port: run anyway, just without the wake-up channel
 INK, PAPER, LILAC, PINK, HOT, GREEN, BABY = "#2F6FE0", "#F7FBFF", "#D9C8FF", "#FFB8E6", "#E84FB0", "#B8E986", "#BFE3FA"
 # the standard Switch colours, the same list as the tablet app (a device sends an index into it; the Desk never picks one for a device)
 THEMES = [("NEON BLUE", (0xD8, 0xF6, 0xFF), (0x7E, 0xD8, 0xF5), "#0AB9E6"), ("NEON RED", (0xFF, 0xE0, 0xDC), (0xFF, 0x8F, 0x84), "#FF3C28"),
@@ -47,7 +60,13 @@ def load():
     except (OSError, ValueError): return {}
 
 cfg = load()
-theme = [int(cfg.get("theme", -1)) % len(THEMES) if int(cfg.get("theme", -1)) >= 0 else None]   # the Desk's own background colour; until you pick one it keeps the classic blue-to-pink
+if not isinstance(cfg, dict): cfg = {}
+def num(key, default, lo, hi, f=int):
+    """A number from the settings file, kept inside lo..hi; the default if it is missing or isn't a number."""
+    try: return min(hi, max(lo, f(cfg.get(key, default))))
+    except (TypeError, ValueError, OverflowError): return default
+_theme = num("theme", -1, -1, len(THEMES) - 1)
+theme = [_theme if _theme >= 0 else None]   # the Desk's own background colour; until you pick one it keeps the classic blue-to-pink
 if theme[0] is not None: TOP, BOTTOM = THEMES[theme[0]][1], THEMES[theme[0]][2]
 
 def save():
@@ -55,7 +74,7 @@ def save():
         os.makedirs(os.path.dirname(CFG), exist_ok=True)
         with open(CFG, "w") as f:
             json.dump({"open": {k: w["visible"] for k, w in reg.items()}, "speed": srv.speed, "area_mode": srv.area_mode,
-                       "custom": list(srv.custom), "screen": screen_idx[0], "highlight": hl["on"], "hl_size": hl["size"], "hl_style": hl["style"], "hl_color": hl["color"], "hl_thick": hl["thick"], "allow_record": srv.allow_record, "theme": theme[0] if theme[0] is not None else -1, "pc_name": pc_name.get().strip()[:20] or "MY PC"}, f)
+                       "custom": list(srv.custom), "screen": screen_idx[0], "highlight": hl["on"], "hl_size": hl["size"], "hl_style": hl["style"], "hl_color": hl["color"], "hl_thick": hl["thick"], "pair_key": pair_key[0], "allow_legacy": srv.allow_legacy, "theme": theme[0] if theme[0] is not None else -1, "pc_name": pc_name.get().strip()[:20] or "MY PC"}, f)
     except OSError: pass
 
 def tip(w, text):
@@ -97,18 +116,23 @@ def label(parent, **kw):
 w0, h0 = ns.u32.GetSystemMetrics(0), ns.u32.GetSystemMetrics(1)
 mons = ns.monitors()
 screens = [("MAIN SCREEN", mons[0])] + ([("ALL SCREENS", ns.virtual_screen())] if len(mons) > 1 else []) + [(f"SCREEN {i}", m) for i, m in enumerate(mons[1:], 2)]
-srv = ns.Server(mons[0], float(cfg.get("speed", 1.0)))
-if 0 <= int(cfg.get("screen", 0)) < len(screens): srv.monitor = screens[int(cfg.get("screen", 0))][1]
+srv = ns.Server(mons[0], num("speed", 1.0, 0.01, 99.0, float))
+screen_idx = [num("screen", 0, 0, len(screens) - 1)]
+srv.monitor = screens[screen_idx[0]][1]
 if cfg.get("area_mode") in ("full", "custom"): srv.area_mode = cfg["area_mode"]
 PORT = srv.open(7777) or 7777  # the first free port from 7777 up; the QR code and the USB link follow it
-if isinstance(cfg.get("custom"), list) and len(cfg["custom"]) == 4: srv.custom = tuple(int(v) for v in cfg["custom"])
+_c = cfg.get("custom")
+if isinstance(_c, list) and len(_c) == 4 and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in _c) and _c[2] > 0 and _c[3] > 0: srv.custom = tuple(int(v) for v in _c)
 overlay_on = False
-srv.allow_record = bool(cfg.get("allow_record", False))
+srv.allow_record = False   # never remembered: recording a shortcut listens to this keyboard, so it is switched on by hand each time
+# the pairing key (see Pairing in pixelpad_server.py): made on first run, kept in the settings; the QR code carries it. Old apps without one are refused unless allowed.
+_key = str(cfg.get("pair_key", ""))
+pair_key = [_key if re.fullmatch("[0-9a-f]{32}", _key) else secrets.token_hex(16)]
+srv.pair, srv.allow_legacy = ns.Pairing(bytes.fromhex(pair_key[0])), bool(cfg.get("allow_legacy", False))
 pc_name = tk.StringVar(value=str(cfg.get("pc_name", "MY PC")).strip()[:20] or "MY PC")   # the name the tablet saves this PC under (you choose it)
-screen_idx = [int(cfg.get("screen", 0))]
 hl = srv.ring   # shared with the tablet, which can change it too
-hl.update(on=bool(cfg.get("highlight", True)), size=int(cfg.get("hl_size", 90)), style=int(cfg.get("hl_style", 0)) % 3,
-          color=int(cfg.get("hl_color", 0)) % 6, thick=int(cfg.get("hl_thick", 3)), win=None, cv=None, down=None, sig=None)
+hl.update(on=bool(cfg.get("highlight", True)), size=num("hl_size", 90, 50, 220), style=num("hl_style", 0, 0, 2),
+          color=num("hl_color", 0, 0, 5), thick=num("hl_thick", 3, 1, 8), win=None, cv=None, down=None, sig=None)
 RING_COLORS = [(HOT, "PINK"), (INK, "BLUE"), (LILAC, "LILAC"), (GREEN, "GREEN"), ("#FFFFFF", "WHITE"), ("#FF3B30", "RED")]
 RING_STYLES = ["ring", "crosshair", "dot"]
 
@@ -360,6 +384,9 @@ name_entry = tk.Entry(nrow, textvariable=pc_name, font=F, relief="solid"); name_
 def commit_name(_=None):
     pc_name.set(pc_name.get().strip()[:20] or "MY PC"); save()
 name_entry.bind("<FocusOut>", commit_name); name_entry.bind("<Return>", commit_name)
+code_lbl = label(d, font=FS); code_lbl.pack(fill="x", side="bottom")
+def show_code(): code_lbl.config(text=" PAIRING CODE  " + " ".join(pair_key[0][i:i + 4] for i in range(0, 32, 4)).upper()); pic(code_lbl, "lock")
+show_code()
 qr = tk.Canvas(d, bg=PAPER, highlightthickness=T, highlightbackground=INK); qr.pack(fill="both", expand=True)
 
 def pick_net(lab):
@@ -393,7 +420,7 @@ def draw_qr(*_):
     if not ip.get():
         qr.create_text(W // 2, H // 2, text="NO NETWORK", fill=INK, font=FB); return
     if size < 40: return
-    m = qr_matrix(f"pixelpad://{ip.get()}:{PORT}?name={quote(pc_name.get().strip()[:20] or 'MY PC')}"); n = len(m)
+    m = qr_matrix(f"pixelpad://{ip.get()}:{PORT}?name={quote(pc_name.get().strip()[:20] or 'MY PC')}&k={pair_key[0]}"); n = len(m)
     cell = max(2, size // (n + 8)); ox, oy = (W - n * cell) // 2, (H - n * cell) // 2
     qr.create_rectangle(ox - 4 * cell, oy - 4 * cell, ox + (n + 4) * cell, oy + (n + 4) * cell, fill="white", outline="")  # quiet zone
     for y, r in enumerate(m):
@@ -561,6 +588,19 @@ def toggle_record():
     srv.allow_record = not srv.allow_record; flag(rec_pill, "keyboard", srv.allow_record); save()
 rec_pill = pill(brow, "CONTROLLER DEVICES MAY RECORD SHORTCUTS", toggle_record, BABY, "keyboard"); flag(rec_pill, "keyboard", srv.allow_record); rec_pill.pack(side="left")
 hint(st, "CLOSING THE WINDOW KEEPS PIXELPAD RUNNING IN THE TRAY (BOTTOM RIGHT OF THE TASKBAR).", wrap=700).pack(fill="x", pady=(0, 8))
+# -- pairing --
+prow = tk.Frame(st, bg=PAPER); prow.pack(fill="x", pady=(0, 4))
+def toggle_legacy():
+    srv.allow_legacy = not srv.allow_legacy; flag(legacy_pill, "lock", srv.allow_legacy); save()
+legacy_pill = pill(prow, "ALLOW OLD APPS WITHOUT PAIRING (NOT SAFE)", toggle_legacy, PAPER, "lock"); flag(legacy_pill, "lock", srv.allow_legacy); legacy_pill.pack(side="left", padx=(0, 6))
+def new_code():
+    from tkinter import messagebox
+    if not messagebox.askyesno("PixelPad Desk", "Make a new pairing code? Every device paired with the old one has to scan the QR code again."): return
+    pair_key[0] = secrets.token_hex(16); srv.pair = ns.Pairing(bytes.fromhex(pair_key[0]))
+    for k in list(srv.devices): srv.drop(k)
+    show_code(); draw_qr(); save(); log("new pairing code made: devices must scan the QR code again")
+pill(prow, "NEW PAIRING CODE", new_code, LILAC, "retry").pack(side="left")
+hint(st, "EVERY PACKET IS SIGNED AND ENCRYPTED WITH THE PAIRING CODE IN THE QR CODE, SO ONLY DEVICES THAT SCANNED IT CAN CONTROL THIS PC. SHARE THE CODE ONLY WITH YOUR OWN DEVICES. OLD APPS (BEFORE 1.3.0) HAVE NO CODE.", wrap=700).pack(fill="x", pady=(0, 8))
 # -- version and updates (the logic is with the update code below) --
 label(st, text="VERSION AND UPDATES").pack(fill="x")
 vcard = tk.Frame(st, bg=PAPER); vcard.pack(fill="x", pady=(2, 8))
@@ -577,7 +617,10 @@ pill(lrow, "", lambda: out.delete("1.0", "end"), PINK, "trash", "Clear the log")
 pill(lrow, "", lambda: (root.clipboard_clear(), root.clipboard_append(out.get("1.0", "end"))), BABY, "copy", "Copy the log").pack(side="left")
 
 def log(*a):
-    root.after(0, lambda: (out.insert("end", time.strftime("%H:%M:%S ") + " ".join(map(str, a)) + "\n"), out.see("end")))
+    def put():
+        out.insert("end", time.strftime("%H:%M:%S ") + " ".join(map(str, a)) + "\n"); out.see("end")
+        if int(out.index("end-1c").split(".")[0]) > 500: out.delete("1.0", "2.0")   # keep the last 500 lines: a flood can't grow it without end
+    root.after(0, put)
 ns.log = log
 
 # ---------- toolbar buttons ----------
@@ -682,21 +725,37 @@ def progress_text(got, total):
     return "CHECKING THE DOWNLOAD..." if total else f"DOWNLOADING {got / 1048576:.1f} MB"
 
 def do_update(exe, sums, show, fail):
-    """Downloads the new exe (show(got, total) reports progress, show(-1, -1) means restarting), checks it, then hands over to a script
-    that swaps it in and starts it. fail(text) is called if anything goes wrong; both run on the window's thread."""
+    """Downloads the new exe (show(got, total) reports progress, show(-1, -1) means restarting), checks it, then swaps it in and starts it.
+    The download goes to a private folder next to the exe (same drive, so the swap is an atomic rename), and the checked file is the one that is
+    swapped in. fail(text) is called if anything goes wrong; both run on the window's thread."""
     def work():
-        import tempfile
-        new = os.path.join(tempfile.gettempdir(), "PixelPadDesk-update.exe")
-        if not ns.fetch_update(exe, sums, new, lambda g, t: root.after(0, show, g, t)):
-            root.after(0, fail, "The update could not be downloaded or did not check out. Nothing was changed."); return
+        import shutil, tempfile
+        me = sys.executable; folder = os.path.dirname(me)
+        try: tmp = tempfile.mkdtemp(prefix="pixelpad-", dir=folder)
+        except OSError: root.after(0, fail, "PixelPad Desk can't write next to its own exe. Move it to a folder you own and try again."); return
+        new, old = os.path.join(tmp, "PixelPadDesk.exe"), me + ".old"
         try:
-            cmd = os.path.join(tempfile.gettempdir(), "pixelpad_update.cmd"); me = sys.executable
-            open(cmd, "w", newline="").write(f'@echo off\r\nset n=0\r\n:wait\r\nping 127.0.0.1 -n 2 >nul\r\nmove /y "{new}" "{me}" >nul 2>&1\r\nif errorlevel 1 (set /a n+=1 & if %n% lss 40 goto wait & exit /b 1)\r\nstart "" "{me}"\r\n(goto) 2>nul & del "%~f0"\r\n')
-            subprocess.Popen(["cmd", "/c", cmd], creationflags=0x08000000 | 0x00000008, close_fds=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)   # no window, detached
-            root.after(0, show, -1, -1)
-            root.after(0, quit_app)
-        except Exception:
-            root.after(0, fail, "The update downloaded but could not be started. Nothing was changed.")
+            if not ns.fetch_update(exe, sums, new, lambda g, t: root.after(0, show, g, t)):
+                root.after(0, fail, "The update could not be downloaded or did not check out. Nothing was changed."); return
+            try:
+                try: os.remove(old)
+                except OSError: pass
+                os.replace(me, old)           # Windows lets a running exe be renamed, not overwritten
+                try: os.replace(new, me)
+                except OSError: os.replace(old, me); raise
+            except OSError:
+                root.after(0, fail, "The update downloaded but could not be swapped in. Nothing was changed."); return
+            shutil.rmtree(tmp, ignore_errors=True)   # now, not in finally: quitting below ends the process first
+            # a fresh start, not a re-use of this copy's unpacked files: PyInstaller leaves variables in the environment that would make the new copy share them
+            env = {k: v for k, v in os.environ.items() if not k.startswith("_MEI") and not k.startswith("_PYI")}; env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+            try: subprocess.Popen([me, "--updated"] + (["--tray"] if "--tray" in sys.argv else []), cwd=folder, close_fds=True, creationflags=0x00000008, env=env,
+                                  stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)   # the new copy waits for this one to leave
+            except OSError:
+                try: os.replace(me, new); os.replace(old, me)
+                except OSError: pass
+                root.after(0, fail, "The update was installed but PixelPad Desk could not start it. Open PixelPad Desk again."); return
+            root.after(0, show, -1, -1); root.after(0, quit_app)
+        finally: shutil.rmtree(tmp, ignore_errors=True)
     threading.Thread(target=work, daemon=True).start()
 
 def ask_update():
@@ -766,9 +825,19 @@ def wake_listener():
         except OSError: return
         if d == b"show": root.after(0, show_window)
 
+def clean_old():
+    """After an update the previous exe is left as PixelPadDesk.exe.old: remove it once the old copy has gone."""
+    old = sys.executable + ".old"
+    for _ in range(60):
+        try: os.remove(old); return
+        except FileNotFoundError: return
+        except OSError: time.sleep(1)
+if getattr(sys, "frozen", False): threading.Thread(target=clean_old, daemon=True).start()
+
 root.protocol("WM_DELETE_WINDOW", hide_window)
-threading.Thread(target=wake_listener, daemon=True).start()
+if _lock: threading.Thread(target=wake_listener, daemon=True).start()
 order[:] = ["connect", "status", "checklist", "area", "settings"]   # a new user needs the QR code first
 root.update_idletasks(); layout(); refresh_bar(); draw_map(); tick(); hl_apply(); hl_tick()
 if "--tray" in sys.argv and tray: ui_visible[0] = False; root.withdraw()
+save()   # the pairing key is made on the first run: keep it
 root.mainloop()

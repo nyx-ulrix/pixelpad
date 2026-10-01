@@ -242,7 +242,16 @@ class SettingsActivity : Activity() {
                 addView(label("MY PCS", 11f), lp(bottom = 4)); addView(pcBox)
                 addView(pill("SCAN THE QR CODE FROM PIXELPAD DESK", LILAC, icon = "qr") { startActivityForResult(Intent(this@SettingsActivity, ScanActivity::class.java), 5) }, lp())
                 addView(pill("ADD A PC BY ITS ADDRESS", PAPER, icon = "plus") { pcDialog(null) { show(0) } }, lp())
-            } else note("USB NEEDS PIXELPAD DESK OPEN ON THE PC. IT SETS UP THE CABLE LINK BY ITSELF."),
+            } else vbox().apply {
+                addView(note("USB NEEDS PIXELPAD DESK OPEN ON THE PC. IT SETS UP THE CABLE LINK BY ITSELF."), lp())
+                val usbCode = input("PAIRING CODE", Cfg.usbKey.chunked(4).joinToString(" "))
+                addView(label("PAIRING CODE (SHOWN IN PIXELPAD DESK UNDER THE QR CODE; SCANNING THE QR CODE ONCE FILLS IT IN)", 10f), lp(bottom = 4)); addView(usbCode, lp())
+                addView(pill("SAVE THE CODE", PAPER, icon = "check") {
+                    val k = Seal.parse(usbCode.text.toString())
+                    if (k == null && usbCode.text.isNotBlank()) Toast.makeText(this@SettingsActivity, "THE PAIRING CODE IS 32 LETTERS AND DIGITS (0-9, A-F)", Toast.LENGTH_LONG).show()
+                    else { Cfg.usbKey = k?.let { Seal.hex(it) } ?: ""; Core.applyConnection(); Core.sender.reconnect(); Toast.makeText(this@SettingsActivity, "SAVED", Toast.LENGTH_SHORT).show() }
+                }, lp())
+            },
             msg, hbox(pill("RETRY", BABY, icon = "retry") { Core.sender.reconnect(); msg.text = "" })))
         content.addView(card("CHECKLIST: WHY CAN'T I CONNECT?", GREEN, checks))
         val statLabel = label("", 10.5f)
@@ -274,17 +283,21 @@ class SettingsActivity : Activity() {
     private fun pcDialog(pc: SavedPc?, done: () -> Unit) {
         val name = input("NAME, E.G. HOME PC", pc?.name ?: "")
         val address = input("PC ADDRESS", ""); val port = input("PORT", "7777", true)
+        val code = input("PAIRING CODE", "")
         val box = vbox().apply {
             setPadding(dp(16), dp(12), dp(16), dp(4)); background = shape(PAPER, dp(4))
             addView(label("NAME", 11f), lp(bottom = 4)); addView(name, lp())
-            if (pc == null) { addView(label("PC ADDRESS (SHOWN IN PIXELPAD DESK'S SETTINGS IF YOU CAN'T SCAN)", 10f), lp(bottom = 4)); addView(address, lp()); addView(label("PORT", 11f), lp(bottom = 4)); addView(port, lp()) }
+            if (pc == null) { addView(label("PC ADDRESS (SHOWN IN PIXELPAD DESK'S SETTINGS IF YOU CAN'T SCAN)", 10f), lp(bottom = 4)); addView(address, lp()); addView(label("PORT", 11f), lp(bottom = 4)); addView(port, lp()); addView(label("PAIRING CODE (SHOWN IN PIXELPAD DESK UNDER THE QR CODE)", 10f), lp(bottom = 4)); addView(code, lp()) }
         }
         AlertDialog.Builder(this).setView(box).setPositiveButton("SAVE") { _, _ ->
-            if (pc != null) { pc.name = name.text.toString().trim().take(20).ifEmpty { pc.name }; Cfg.savePcs(); done() }
+            val typed = code.text.toString()
+            if (typed.isNotBlank() && Seal.parse(typed) == null) Toast.makeText(this, "THE PAIRING CODE IS 32 LETTERS AND DIGITS (0-9, A-F)", Toast.LENGTH_LONG).show()
+            else if (pc != null) { pc.name = name.text.toString().trim().take(20).ifEmpty { pc.name }; Seal.parse(typed)?.let { pc.key = Seal.hex(it) }; Cfg.savePcs(); Core.applyConnection(); done() }
             else if (address.text.isBlank()) Toast.makeText(this, "TYPE THE PC'S ADDRESS", Toast.LENGTH_SHORT).show()
             else {
-                val saved = Cfg.addPc(name.text.toString(), address.text.toString().trim(), port.text.toString().toIntOrNull() ?: 7777)
-                Cfg.selectPc(saved); Cfg.transport = "wifi"; Core.applyConnection(); Core.sender.reconnect(); done()
+                val saved = Cfg.addPc(name.text.toString(), address.text.toString().trim(), port.text.toString().toIntOrNull() ?: 7777, typed)
+                if (saved == null) Toast.makeText(this, "THAT ADDRESS OR PORT ISN'T VALID", Toast.LENGTH_LONG).show()
+                else { Seal.parse(typed)?.let { Cfg.usbKey = Seal.hex(it) }; Cfg.selectPc(saved); Cfg.transport = "wifi"; Core.applyConnection(); Core.sender.reconnect(); done() }
             }
         }.setNegativeButton("CANCEL", null).show()
     }
@@ -308,6 +321,7 @@ class SettingsActivity : Activity() {
             val pc = Cfg.activePc()
             r += Check(pc != null && err != "badhost", if (pc != null) "PC SAVED: ${pc.name}" else "NO PC SAVED YET", "SCAN THE QR CODE IN PIXELPAD DESK, OR ADD A PC BY ITS ADDRESS.")
         }
+        r += Check(Core.sender.paired(), if (Core.sender.paired()) "PAIRED: SIGNED AND ENCRYPTED" else "NOT PAIRED", "SCAN THE QR CODE IN PIXELPAD DESK (OR TYPE ITS PAIRING CODE) SO ONLY YOUR PC CAN TALK TO THIS APP AND NOBODY ELSE CAN CONTROL THE PC.")
         val hint = when (t) {
             "usb" -> "PIXELPAD DESK MUST BE OPEN ON THE PC. PRESS RECONNECT USB THERE, OR TRY WI-FI."
             "wifi" -> "SAME WI-FI AS THE PC? ALLOW PIXELPAD DESK THROUGH WINDOWS FIREWALL. SCAN THE QR CODE AGAIN."
