@@ -77,3 +77,7 @@ python server/test_server.py
 ## How it talks
 
 16-byte packets: UDP over Wi-Fi / Bluetooth, TCP over USB (through `adb reverse`). The tablet smooths the pen with a One Euro filter and the PC replays the samples with the spacing the tablet measured. See `server/pixelpad_server.py` and `android/app/src/main/java/com/pixelpad/app/Sender.kt`.
+
+## Licence
+
+[MIT](LICENSE). PixelPad uses open-source libraries (zxing, vgamepad, segno, pystray, Pillow and others) under their own licences.
