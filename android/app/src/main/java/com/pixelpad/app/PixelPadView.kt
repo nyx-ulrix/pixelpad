@@ -718,6 +718,8 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
     private var fMaxN = 0; private var fStart = 0L; private var fMoved = false
     private var fCx = 0f; private var fCy = 0f; private var fSx = 0f; private var fSy = 0f
     private var fDrag = false; private var fLastTap = 0L
+    private val FINGER_SPREAD = 0.2f                // fingers are this fraction as far apart on the PC as on the tablet...
+    private val FINGER_REACH = 90f                   // ...and never more than this many PC pixels from the first one
     private val tSlot = HashMap<Int, Int>()          // pointer id -> touch contact number on the PC
     private val tStartX = HashMap<Int, Float>(); private val tStartY = HashMap<Int, Float>()
     private val tLast = HashMap<Int, IntArray>()     // pointer id -> last offset sent, in PC pixels
@@ -726,10 +728,15 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
 
     private fun isFinger(e: MotionEvent, i: Int) = e.getToolType(i).let { it != TOOL_TYPE_STYLUS && it != MotionEvent.TOOL_TYPE_ERASER && it != 5 /* palm */ }
 
-    private fun sendTouch(phase: Int, id: Int, px: Float, py: Float) {
+    /** The contact for one finger: (gx, gy) is how far the whole group has moved, (sx, sy) where this finger sits relative to the first one.
+     *  The group moves at full scale, but the gap between fingers is squeezed (and capped): spread over the whole PC screen, two fingers
+     *  can land on two windows side by side, and then both scroll at once. */
+    private fun sendTouch(phase: Int, id: Int, gx: Float, gy: Float, sx: Float, sy: Float) {
         val slot = tSlot[id] ?: return
         val k = if (tx.screenW > 0 && width > 0) tx.screenW.toFloat() / width else 1f // tablet pixels -> PC pixels
-        val ox = ((px - tAnchorX) * k).roundToInt(); val oy = ((py - tAnchorY) * k).roundToInt()
+        var spx = sx * k * FINGER_SPREAD; var spy = sy * k * FINGER_SPREAD
+        val m = hypot(spx, spy); if (m > FINGER_REACH) { spx *= FINGER_REACH / m; spy *= FINGER_REACH / m }
+        val ox = (gx * k + spx).roundToInt(); val oy = (gy * k + spy).roundToInt()
         val last = tLast[id]
         if (phase == 0 && last != null && last[0] == ox && last[1] == oy) return
         tLast[id] = intArrayOf(ox, oy)
@@ -743,7 +750,7 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
             if (tSlot.isEmpty()) { tAnchorX = e.getX(i); tAnchorY = e.getY(i); tAxis = 0 }
             tSlot[id] = (0..9).first { s -> s !in tSlot.values }
             tStartX[id] = e.getX(i); tStartY[id] = e.getY(i)
-            sendTouch(1, id, e.getX(i), e.getY(i))
+            sendTouch(1, id, 0f, 0f, e.getX(i) - tAnchorX, e.getY(i) - tAnchorY)
         }
     }
 
@@ -766,9 +773,9 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
         val gx = if (tAxis == 0 || tAxis == 1) 0f else dX * dir   // vertical swipe: no sideways drift
         val gy = if (tAxis == 0 || tAxis == 2) 0f else dY * dir   // horizontal swipe: no up/down drift
         for (i in 0 until e.pointerCount) {
-            val id = e.getPointerId(i); val x0 = tStartX[id] ?: continue; val y0 = tStartY[id] ?: continue
-            // how this finger moves relative to the group is kept as is, so pinch and rotate still work
-            sendTouch(0, id, x0 + gx + (e.getX(i) - x0 - dX), y0 + gy + (e.getY(i) - y0 - dY))
+            val id = e.getPointerId(i); if (id !in tStartX) continue
+            // how this finger sits and moves relative to the group is kept (just squeezed), so pinch and rotate still work
+            sendTouch(0, id, gx, gy, e.getX(i) - dX - tAnchorX, e.getY(i) - dY - tAnchorY)
         }
     }
 
