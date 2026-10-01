@@ -19,6 +19,7 @@ class FakeU32:
         pi = i.u.pen.pointerInfo
         self.injected.append((pi.pointerFlags, pi.ptPixelLocation.x, pi.ptPixelLocation.y, i.u.pen.penFlags, i.u.pen.pressure))
     def GetCursorPos(self, p): p._obj.x, p._obj.y = 500, 400
+    def SetCursorPos(self, x, y): self.cursor = (x, y)
     def GetSystemMetrics(self, k): return self.metrics.get(k, 0)
 
 fake = FakeU32(); ns.u32 = fake
@@ -120,6 +121,23 @@ send(pkt(3, 0, 0, 0, 0, 0, 3), "c"); assert srv.devices["c"].colour == 2        
 send(pkt(3, 0, 0, 0, 0, 0, 8), "c"); assert srv.devices["c"].colour == 7        # all eight Switch colours come through unchanged
 send(pkt(7, 7, 0, 5), "c"); assert srv.devices["c"].colour == 5                  # older apps sent it as a setting
 srv.drop("c")
+
+# a mouse-button shortcut held on the tablet: the pen becomes that mouse button (moves the cursor, touching presses it), then goes back to being a pen
+for k in list(srv.devices): srv.drop(k)
+send(pkt(1, 0, 0, 32768, 32768, 800), "p")                                       # a normal pen: hover, then touch
+n0 = len(fake.injected); mouse_calls.clear()
+send(pkt(1, 0, 16, 65535, 0, 0), "p")                                            # right-click shortcut held, pen hovering: only the cursor moves
+assert fake.cursor == (1919, 0) and not mouse_calls, (fake.cursor, mouse_calls)
+assert fake.injected[n0][0] == ns.UPDATE, fake.injected[n0:]                      # the real pen was lifted out of range first (a single leave frame)
+n1 = len(fake.injected)
+send(pkt(1, 1, 16, 32768, 32768, 900), "p"); assert mouse_calls == [(ns.RDOWN, 0, 0, 0)], mouse_calls   # touching = right button down
+send(pkt(1, 1, 16, 40000, 32768, 900), "p"); assert fake.cursor[0] > 1000 and len(mouse_calls) == 1       # dragging keeps it down
+send(pkt(1, 0, 16, 40000, 32768, 0), "p"); assert mouse_calls[-1] == (ns.RUP, 0, 0, 0), mouse_calls      # lifting releases it
+assert len(fake.injected) == n1, "no pen frames while it acts as a mouse"
+send(pkt(1, 1, 8, 1000, 1000, 900), "p"); send(pkt(1, 0, 0, 1000, 1000, 0), "p")                         # left shortcut let go mid-stroke: the button is released
+assert (ns.LDOWN, 0, 0, 0) in mouse_calls and (ns.LUP, 0, 0, 0) in mouse_calls, mouse_calls
+send(pkt(1, 0, 0, 20000, 20000, 0), "p"); assert fake.injected[-1][0] & ns.INRANGE                         # and the pen is a pen again
+srv.drop("p")
 
 # no app-made shortcuts on the trackpad: scroll / zoom / gesture actions are gone, plain clicks remain
 mouse_calls.clear(); keys.clear()

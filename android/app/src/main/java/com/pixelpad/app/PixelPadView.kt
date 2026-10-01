@@ -157,6 +157,8 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
     private var lastPenMs = SystemClock.uptimeMillis()
     private var editing = false         // controller layout editing, or tablet-button arranging
     private var eraserOn = false
+    private var mouseHeld = 0     // tablet screen: a mouse-button shortcut is held (8 left, 16 right, 32 middle): the pen acts as that button
+    private var mouseArmed = 0    // ...or was tapped: the next pen stroke is that button, then it is spent
     private val dp = resources.displayMetrics.density
     private val barH = 52 * dp
     private val exitW = 52 * dp
@@ -553,6 +555,12 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
             action.startsWith("keys:") -> if (phase != 2) action.removePrefix("keys:").split(",").forEach { s -> Keys.parse(s.trim())?.let { (m, v) -> tx.key(v, m, 0) } }
             action == "eraser" -> if (phase != 2) { eraserOn = !eraserOn; invalidate() }
             action == "mode:next" -> if (phase != 2 && !locked && !barLocked && !editing) { setMode((mode + 1) % 4); flash(MODE_ICONS[mode]) }
+            action.startsWith("mouse:") && mode == TABLET -> {
+                // on the tablet screen the pen itself becomes that mouse button: while the shortcut is held, or for the next stroke if it was only tapped
+                val bit = when (action.removePrefix("mouse:")) { "left" -> 8; "right" -> 16; else -> 32 }
+                when (phase) { 1 -> mouseHeld = bit; 2 -> if (mouseHeld == bit) mouseHeld = 0; else -> mouseArmed = if (mouseArmed == bit) 0 else bit }
+                invalidate()
+            }
             action.startsWith("mouse:") -> {
                 val (dn, up) = when (action.removePrefix("mouse:")) { "left" -> 1 to 2; "right" -> 7 to 8; else -> 9 to 10 }
                 if (phase != 2) tx.pen(TRACKPAD, dn, 0, 0, 0)
@@ -605,7 +613,7 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
         if (!touching) return
         if (!inBar) when (mode) {
             TRACKPAD, PRESENT -> tpUp()
-            TABLET -> if (gesturing) finishGesture() else { sampleT = SystemClock.uptimeMillis(); tablet(0, x, y, 0f, 0, 0, 0) }
+            TABLET -> if (gesturing) finishGesture() else { sampleT = SystemClock.uptimeMillis(); tablet(0, x, y, 0f, 0, 0, 0); mouseArmed = 0 }
         }
         touching = false; inBar = false; hvP = 0f; hoverValid = false
         if (mode == TABLET) softExit()
@@ -831,6 +839,7 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
         var f = 0
         if (penHeld("barrel", bs)) f = f or 1
         if (eraserOn || penHeld("eraser-hold", bs)) f = f or 2
+        if (mouseHeld != 0) f = f or mouseHeld else if (mouseArmed != 0) f = f or mouseArmed   // 8 / 16 / 32: the PC treats the pen as that mouse button
         return f
     }
 
@@ -888,7 +897,7 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
 
     private fun releaseKeys() {
         for ((_, k) in keyPtr) if (k.hold) perform(k.action, 2)
-        keyPtr.clear()
+        keyPtr.clear(); mouseHeld = 0; mouseArmed = 0
     }
 
     /** Presses and releases tablet buttons for any pointer (pen or finger). Returns true if the event was fully used by a button. */
@@ -1197,6 +1206,9 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
         if (Cfg.keys.isEmpty() && !editing) text(c, "ADD YOUR OWN BUTTONS IN SETTINGS > TABLET KEYS", ar.centerX(), ar.centerY(), 10f, Paint.Align.CENTER, INK, ar.width() - 24 * dp)
         drawKeys(c, false)
         if (eraserOn) pill(c, RectF(ar.left + 10 * dp, ar.bottom - 42 * dp, ar.left + 66 * dp, ar.bottom - 10 * dp), PINK, "", INK, 11f, "eraser")
+        val mb = if (mouseHeld != 0) mouseHeld else mouseArmed   // say what the pen is acting as
+        if (mb != 0) pill(c, RectF(width / 2f - 130 * dp, barH + 10 * dp, width / 2f + 130 * dp, barH + 40 * dp), LILAC,
+            when (mb) { 8 -> "LEFT CLICK"; 16 -> "RIGHT CLICK"; else -> "MIDDLE CLICK" } + (if (mouseHeld == 0) " · NEXT STROKE" else ""), INK, 11f, "cursor")
         if (gesturing && gPts.size >= 4) {
             p.style = Paint.Style.STROKE; p.strokeWidth = 6 * dp; p.color = HOT
             val path = Path().apply { moveTo(gPts[0], gPts[1]); var i = 2; while (i < gPts.size) { lineTo(gPts[i], gPts[i + 1]); i += 2 } }

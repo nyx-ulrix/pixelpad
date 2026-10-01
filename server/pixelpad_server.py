@@ -139,14 +139,14 @@ class Pen:
         if not self.dev: raise OSError("could not create the pen device (needs Windows 10+)")
         self.srv, self.inrange, self.contact, self.pos, self.last = srv, False, False, None, 0.0
         self.lastpos = (0, 0)
+        self.mbtn = 0   # the mouse button (8 left, 16 right, 32 middle) the pen is holding down while it acts as a mouse, else 0
 
     def close(self):
+        self._mouse_release()
         if self.dev: u32.DestroySyntheticPointerDevice(ctypes.c_void_p(self.dev)); self.dev = None
 
-    def send(self, a, buttons, x, y, pressure, tx, ty):
-        """buttons: 1 = pen barrel button, 2 = eraser end, 4 = x and y are relative movement."""
-        if a == 3 and not self.inrange: return
-        self.last = time.time()
+    def _map(self, buttons, x, y):
+        """Where on the PC screen the pen is: absolute (0..65535 across the area) or relative (movement, like a mouse)."""
         ax, ay, aw, ah = self.srv.area()
         if buttons & 4:  # relative: x, y are movement deltas in phone pixels, like a mouse
             if self.pos is None or not self.inrange:
@@ -154,9 +154,30 @@ class Pen:
             k = self.srv.rel_scale(self.owner.phone)
             self.pos[0] = min(max(self.pos[0] + x * k, ax), ax + aw - 1)
             self.pos[1] = min(max(self.pos[1] + y * k, ay), ay + ah - 1)
-            px, py = int(self.pos[0]), int(self.pos[1])
-        else:            # absolute: x, y are 0..65535 across the whole screen area
-            px, py = ax + min(x * aw // 65535, aw - 1), ay + min(y * ah // 65535, ah - 1)  # never one pixel past the edge
+            return int(self.pos[0]), int(self.pos[1])
+        return ax + min(x * aw // 65535, aw - 1), ay + min(y * ah // 65535, ah - 1)   # never one pixel past the edge
+
+    def _mouse_release(self):
+        if self.mbtn: mouse({8: LUP, 16: RUP, 32: MUP}[self.mbtn]); self.mbtn = 0
+
+    def _as_mouse(self, a, buttons, ov, x, y):
+        """A mouse-button shortcut is held on the tablet: the pen is a mouse for now. It moves the cursor, and touching presses that button."""
+        self.last = time.time()
+        if self.inrange: self.send(3, 0, 0, 0, 0, 0, 0)   # hand over: lift the real pen out of range so Windows sees only the mouse
+        if a == 3: self._mouse_release(); return
+        px, py = self._map(buttons, x, y)
+        u32.SetCursorPos(px, py); self.lastpos = (px, py)
+        if a == 1 and not self.mbtn: self.mbtn = ov; mouse({8: LDOWN, 16: RDOWN, 32: MDOWN}[ov])
+        elif a != 1: self._mouse_release()
+
+    def send(self, a, buttons, x, y, pressure, tx, ty):
+        """buttons: 1 = pen barrel button, 2 = eraser end, 4 = x and y are relative movement, 8 / 16 / 32 = act as the left / right / middle mouse button instead of a pen."""
+        ov = buttons & 56
+        if self.mbtn and ov != self.mbtn: self._mouse_release()   # the shortcut was let go (or changed) mid-stroke
+        if ov: return self._as_mouse(a, buttons, ov, x, y)
+        if a == 3 and not self.inrange: return
+        self.last = time.time()
+        px, py = self._map(buttons, x, y)
         t = 0 if a == 3 else (2 if a == 1 else 1)  # 0 leave, 1 hover, 2 touching
         if t == 0:   # leaving: stay where the pen last was (the leave packet carries no position)
             px, py = self.lastpos
