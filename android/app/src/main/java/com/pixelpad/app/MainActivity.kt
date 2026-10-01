@@ -73,7 +73,9 @@ class MainActivity : Activity() {
     }
 
     override fun onResume() {
-        super.onResume(); Core.applyConnection(); view.reload()
+        super.onResume(); Core.applyConnection()
+        @Suppress("DEPRECATION") run { pinned = (getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager).lockTaskModeState != android.app.ActivityManager.LOCK_TASK_MODE_NONE }   // the update screen can unpin
+        view.reload()
         if (!scanChecked) { // on launch: if no PC answers, show the QR scanner (once per launch)
             scanChecked = true; scanPending = true
             handler.postDelayed(scanRun, 1800)
@@ -90,18 +92,18 @@ class MainActivity : Activity() {
         val have = try { packageManager.getPackageInfo(packageName, 0).versionName ?: "" } catch (e: Exception) { "" }
         Thread {
             val r = Updater.latest() ?: return@Thread
-            if (Updater.newer(r.version, have)) runOnUiThread { if (!isFinishing) askToUpdate(r, have) }
+            if (Updater.newer(r.version, have) && r.version != Cfg.updateAsked) runOnUiThread { if (!isFinishing) askToUpdate(r, have) }
         }.apply { isDaemon = true }.start()
     }
 
+    /** Asked once per version. UPDATE opens Settings > App, which shows the download and has the button if you would rather do it later. */
     private fun askToUpdate(r: Updater.Release, have: String) {
         try {
+            Cfg.updateAsked = r.version
             AlertDialog.Builder(this).setTitle("UPDATE AVAILABLE")
-                .setMessage("PIXELPAD ${r.version} IS OUT (YOU HAVE $have). UPDATE NOW? THE APP RESTARTS WHEN IT IS DONE.")
-                .setPositiveButton("UPDATE") { _, _ ->
-                    try { stopLockTask() } catch (e: Exception) {}; pinned = false   // the installer can't open while the app is pinned
-                    Updater.install(this, r) { msg -> Toast.makeText(this, msg, Toast.LENGTH_LONG).show() }
-                }.setNegativeButton("LATER", null).show()
+                .setMessage("PIXELPAD ${r.version} IS OUT (YOU HAVE $have). YOU CAN ALSO UPDATE LATER FROM SETTINGS > APP.")
+                .setPositiveButton("UPDATE") { _, _ -> startActivity(Intent(this, SettingsActivity::class.java).putExtra("page", 8).putExtra("update", true)) }
+                .setNegativeButton("LATER", null).show()
         } catch (e: Exception) {}
     }
 

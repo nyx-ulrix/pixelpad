@@ -20,6 +20,12 @@ object Updater {
 
     class Release(val version: String, val apkUrl: String)
 
+    /** Set by the Settings page while it shows the update: told when Android's installer says the update did not go through. */
+    var onResult: ((String) -> Unit)? = null
+
+    /** The version this app is. */
+    fun version(c: Context) = try { c.packageManager.getPackageInfo(c.packageName, 0).versionName ?: "" } catch (e: Exception) { "" }
+
     /** Is version a newer than b? Compared number by number, so 1.1.10 is newer than 1.1.9. */
     fun newer(a: String, b: String): Boolean {
         val x = nums(a); val y = nums(b)
@@ -44,13 +50,19 @@ object Updater {
         }
     } catch (e: Exception) { null }
 
-    /** Downloads the APK and hands it to Android's installer, which asks you to confirm. onFail gets a short message. */
-    fun install(a: Activity, r: Release, onFail: (String) -> Unit) {
-        if (Build.VERSION.SDK_INT >= 26 && !a.packageManager.canRequestPackageInstalls()) {   // first time: Android wants you to allow installs from this app
-            a.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${a.packageName}")))
-            onFail("ALLOW INSTALLING FROM THIS APP, THEN OPEN THE APP AGAIN TO UPDATE"); return
-        }
-        Toast.makeText(a, "DOWNLOADING THE UPDATE...", Toast.LENGTH_SHORT).show()
+    /** Android only lets an app install other apps once you allow it (Settings > Install unknown apps). */
+    fun canInstall(a: Activity) = Build.VERSION.SDK_INT < 26 || a.packageManager.canRequestPackageInstalls()
+
+    /** Opens that Android page for this app. */
+    fun askPermission(a: Activity) {
+        if (Build.VERSION.SDK_INT >= 26) a.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${a.packageName}")))
+    }
+
+    /**
+     * Downloads the APK, reporting (bytes so far, total bytes or -1) as it goes, then hands it to Android's installer, which asks you to
+     * confirm. Callbacks arrive on the main thread; onFail gets a short message.
+     */
+    fun install(a: Activity, r: Release, onProgress: (Long, Long) -> Unit, onFail: (String) -> Unit) {
         Thread {
             try {
                 val pi = a.packageManager.packageInstaller
@@ -58,7 +70,19 @@ object Updater {
                 pi.openSession(id).use { s ->
                     val conn = URL(r.apkUrl).openConnection() as HttpURLConnection
                     conn.connectTimeout = 10000; conn.readTimeout = 20000; conn.setRequestProperty("User-Agent", "PixelPad")
-                    s.openWrite("pixelpad.apk", 0, -1).use { out -> conn.inputStream.use { it.copyTo(out) }; s.fsync(out) }
+                    val total = conn.contentLengthLong
+                    s.openWrite("pixelpad.apk", 0, total).use { out ->
+                        val buf = ByteArray(32 * 1024); var got = 0L; var shown = 0L
+                        conn.inputStream.use { inp ->
+                            while (true) {
+                                val n = inp.read(buf); if (n < 0) break
+                                out.write(buf, 0, n); got += n
+                                if (got - shown >= 32 * 1024) { shown = got; val g = got; a.runOnUiThread { onProgress(g, total) } }
+                            }
+                        }
+                        s.fsync(out)
+                        val g = got; a.runOnUiThread { onProgress(g, if (total > 0) total else g) }
+                    }
                     val flags = PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
                     s.commit(PendingIntent.getBroadcast(a, id, Intent(a, UpdateReceiver::class.java), flags).intentSender)
                 }
@@ -71,10 +95,13 @@ object Updater {
 class UpdateReceiver : BroadcastReceiver() {
     @Suppress("DEPRECATION")
     override fun onReceive(c: Context, i: Intent) {
-        when (i.getIntExtra(PackageInstaller.EXTRA_STATUS, -1)) {
+        when (val st = i.getIntExtra(PackageInstaller.EXTRA_STATUS, -1)) {
             PackageInstaller.STATUS_PENDING_USER_ACTION -> (i.getParcelableExtra<Intent>(Intent.EXTRA_INTENT))?.let { c.startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
             PackageInstaller.STATUS_SUCCESS -> {}
-            else -> Toast.makeText(c, "THE UPDATE DID NOT INSTALL", Toast.LENGTH_LONG).show()
+            else -> {
+                val msg = if (st == PackageInstaller.STATUS_FAILURE_ABORTED) "UPDATE CANCELLED" else "THE UPDATE DID NOT INSTALL: " + (i.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: "ERROR $st").uppercase()
+                Toast.makeText(c, msg, Toast.LENGTH_LONG).show(); Updater.onResult?.invoke(msg)
+            }
         }
     }
 }

@@ -60,6 +60,8 @@ class SettingsActivity : Activity() {
     private lateinit var tabScroll: HorizontalScrollView
     private var page = 0
     private var saveConn: (() -> Unit)? = null  // saves the address and port fields when the page or screen is left
+    private var autoUpdate = false                 // opened from the start-up update prompt: start the download as soon as the version is known
+    private var afterAllow: (() -> Unit)? = null   // carry on with the update once Android's "install unknown apps" switch has been turned on
     private val pages = listOf("CONNECTION", "TRACKPAD", "TABLET", "PEN BUTTONS", "TABLET KEYS", "GESTURES", "CONTROLLER", "PC CURSOR", "APP")
     private val pageIcons = listOf("wifi", "touchpad", "pen", "penbutton", "keys", "gesture", "gamepad", "cursor", "gear")
     private val pageColors = listOf(BABY, LILAC, PINK, PEACH, LILAC, PEACH, GREEN, PINK, BABY)
@@ -180,12 +182,15 @@ class SettingsActivity : Activity() {
         content = vbox()
         root.addView(ScrollView(this).apply { addView(content) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
+        autoUpdate = intent.getBooleanExtra("update", false)
         show(intent.getIntExtra("page", 0))
     }
 
+    override fun onDestroy() { Updater.onResult = null; super.onDestroy() }
+
     override fun onActivityResult(req: Int, res: Int, data: Intent?) { super.onActivityResult(req, res, data); if (req == 5 && page == 0) show(0) }
 
-    override fun onResume() { super.onResume(); live?.let { handler.removeCallbacks(it); handler.post(it) }; window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY }
+    override fun onResume() { super.onResume(); afterAllow?.let { if (Updater.canInstall(this)) { afterAllow = null; it() } }; live?.let { handler.removeCallbacks(it); handler.post(it) }; window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY }
     override fun onStart() { super.onStart(); Core.visible(1) }
     override fun onStop() { Core.visible(-1); super.onStop() }
     override fun onPause() { saveConn?.invoke(); live?.let { handler.removeCallbacks(it) }; Core.sender.recordListener = null; Core.sender.cancelRecord(); super.onPause() }
@@ -584,7 +589,67 @@ class SettingsActivity : Activity() {
             chooser("COLOUR", colours, { Cfg.ringColor.toString() }, { Cfg.ringColor = it.toInt(); changed() })))
     }
 
+    /** Version, a check against GitHub, and the update itself with its download progress. */
+    private fun updateCard(): View {
+        val have = Updater.version(this)
+        val status = label("", 12f)
+        val bar = Bar(this).apply { visibility = View.GONE }
+        var found: Updater.Release? = null
+        val btn = pill("CHECK FOR UPDATES", GREEN, icon = "retry") {}
+        fun idle(msg: String) {
+            status.text = msg.uppercase(); bar.visibility = View.GONE; btn.isEnabled = true; btn.alpha = 1f
+            btn.text = (found?.let { "UPDATE TO ${it.version}" } ?: "CHECK FOR UPDATES").uppercase()
+        }
+        fun busy(msg: String, pct: Int = -1) { status.text = msg.uppercase(); btn.isEnabled = false; btn.alpha = .5f; bar.visibility = if (pct >= 0) View.VISIBLE else View.GONE; bar.pct = pct }
+        fun install() {
+            val r = found ?: return
+            if (!Updater.canInstall(this)) {
+                afterAllow = { install() }
+                idle("ANDROID WANTS YOUR OK FIRST: TURN ON ALLOW FROM THIS SOURCE FOR PIXELPAD, THEN COME BACK AND THE UPDATE STARTS"); Updater.askPermission(this); return
+            }
+            try { stopLockTask() } catch (e: Exception) {}   // the installer can't open over a pinned app
+            Updater.onResult = { msg -> idle(msg) }
+            busy("DOWNLOADING 0%", 0)
+            Updater.install(this, r, { got, total ->
+                if (total > 0 && got < total) busy("DOWNLOADING ${(got * 100 / total).toInt()}%  (%.1f / %.1f MB)".format(got / 1048576f, total / 1048576f), (got * 100 / total).toInt())
+                else busy("DOWNLOADED. ANDROID'S INSTALL SCREEN OPENS NEXT: TAP INSTALL. IF YOU DON'T SEE IT, UNLOCK THE SCREEN.", 100)
+            }, { msg -> idle(msg) })
+        }
+        fun check() {
+            busy("CHECKING GITHUB...")
+            Thread {
+                val r = Updater.latest()
+                runOnUiThread {
+                    if (isFinishing) return@runOnUiThread
+                    found = r?.takeIf { Updater.newer(it.version, have) }
+                    when {
+                        r == null -> idle("COULDN'T REACH GITHUB. CHECK THE INTERNET AND TRY AGAIN")
+                        found == null -> idle("YOU HAVE THE LATEST VERSION")
+                        else -> { idle("VERSION ${r.version} IS OUT"); if (autoUpdate) { autoUpdate = false; install() } }
+                    }
+                }
+            }.apply { isDaemon = true }.start()
+        }
+        btn.setOnClickListener { if (found != null) install() else check() }
+        idle("YOU HAVE VERSION $have"); check()
+        return card("UPDATES", GREEN, label("PIXELPAD $have", 12f), status, bar.also { it.layoutParams = lp(h = dp(16)) }, btn,
+            note("PIXELPAD ASKS ABOUT A NEW VERSION ONCE WHEN YOU OPEN THE APP. UPDATING DOWNLOADS THE APK FROM THE LATEST GITHUB RELEASE AND ANDROID ASKS YOU TO CONFIRM THE INSTALL. THE APP RESTARTS WHEN IT IS DONE."))
+    }
+
+    /** A thin retro progress bar. */
+    private class Bar(c: Context) : View(c) {
+        var pct = 0; set(v) { field = v; invalidate() }
+        private val p = Paint()
+        override fun onDraw(cv: Canvas) {
+            val d = resources.displayMetrics.density; val w = width.toFloat(); val h = height.toFloat()
+            p.style = Paint.Style.FILL; p.color = PAPER; cv.drawRect(0f, 0f, w, h, p)
+            p.color = HOT; cv.drawRect(0f, 0f, w * pct.coerceIn(0, 100) / 100f, h, p)
+            p.style = Paint.Style.STROKE; p.strokeWidth = 3 * d; p.color = INK; cv.drawRect(1.5f * d, 1.5f * d, w - 1.5f * d, h - 1.5f * d, p)
+        }
+    }
+
     private fun about() {
+        content.addView(updateCard())
         content.addView(card("PIXELPAD", BABY,
             note("USE A TABLET WITH A PEN AS A TRACKPAD, A DRAWING TABLET, A CONTROLLER AND A PRESENTER FOR YOUR PC."),
             note("LOCK: ON ANY SCREEN, DOUBLE-TAP THE LOCK ICON AT THE TOP LEFT. THE SCREEN GOES DARK AND MINIMAL (STILL IN THE SAME COLOURS), THE TOP BAR STOPS RESPONDING, AND YOU KEEP WHAT YOU NEED: THE PEN, YOUR TABLET BUTTONS, THE CONTROLLER OR THE PREV / NEXT BUTTONS. DOUBLE-TAP AGAIN TO UNLOCK.")))
