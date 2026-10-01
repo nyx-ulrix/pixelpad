@@ -48,7 +48,7 @@ Open PixelPad Desk, then open the app on the tablet. If no PC answers, the QR sc
 
 ## Colours
 
-Pick the app's theme colour in **Settings > App**, from the standard Nintendo Switch colours, or leave it on **Auto** and it follows your player number (1 neon blue, 2 neon red, 3 neon green, 4 neon pink). PixelPad Desk shows each player in their colour, and its own background colour is in its Settings.
+Pick the app's theme colour in **Settings > App**, from the standard Nintendo Switch colours. It is that device's colour: the app sends it to PixelPad Desk, which shows it next to the device's player number, and the PC never assigns or changes it. A new install starts with one of the four player colours picked at random. PixelPad Desk's own background colour is in its Settings.
 
 ## Your own buttons, pen buttons and gestures
 

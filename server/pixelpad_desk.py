@@ -20,12 +20,13 @@ except OSError:
     try: socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(b"show", ("127.0.0.1", 47771))
     finally: sys.exit(0)
 INK, PAPER, LILAC, PINK, HOT, GREEN, BABY = "#2F6FE0", "#F7FBFF", "#D9C8FF", "#FFB8E6", "#E84FB0", "#B8E986", "#BFE3FA"
-# background colours, shared with the tablet app: the first four are the player colours (1 pink, 2 blue, 3 green, 4 lilac)
+# the standard Switch colours, the same list as the tablet app (a device sends an index into it; the Desk never picks one for a device)
 THEMES = [("NEON BLUE", (0xD8, 0xF6, 0xFF), (0x7E, 0xD8, 0xF5), "#0AB9E6"), ("NEON RED", (0xFF, 0xE0, 0xDC), (0xFF, 0x8F, 0x84), "#FF3C28"),
           ("NEON GREEN", (0xE3, 0xFF, 0xDC), (0x8E, 0xEA, 0x7A), "#1EDC00"), ("NEON PINK", (0xFF, 0xE0, 0xEA), (0xFF, 0x8F, 0xB4), "#FF3278"),
           ("NEON YELLOW", (0xFC, 0xFF, 0xD0), (0xEE, 0xF5, 0x6A), "#E6FF00"), ("NEON PURPLE", (0xF3, 0xDC, 0xFF), (0xD5, 0x8C, 0xF5), "#B400E6"),
           ("NEON ORANGE", (0xFF, 0xEA, 0xD6), (0xFF, 0xB4, 0x70), "#FF8200"), ("GREY", (0xED, 0xED, 0xED), (0xB5, 0xB5, 0xB5), "#828282")]
 TOP, BOTTOM, QRINK, WARN = (0xC9, 0xEE, 0xFF), (0xFF, 0xC9, 0xEA), "#12306B", "#B0206E"
+NO_COLOUR = "#C8CCD4"   # shown until a device tells us its own colour
 F, FS, FB = ("Courier New", 10, "bold"), ("Courier New", 9, "bold"), ("Courier New", 13, "bold")
 CFG = os.path.join(os.environ.get("APPDATA", "."), "PixelPadDesk", "settings.json")
 
@@ -604,9 +605,9 @@ def _tick():
     by = {x.slot: x for x in devs}
     for i, p in enumerate(players, 1):
         x = by.get(i)
-        if not x: p.config(text=f"P{i}  ---- EMPTY ----"); pic(p, "swatch:" + THEMES[i - 1][3]); continue   # an empty slot still shows its colour
+        if not x: p.config(text=f"P{i}  ---- EMPTY ----"); pic(p, "swatch:" + NO_COLOUR); continue   # an empty slot has no colour: none is made up for it
         rate = (x.count - last.get(i, (0, now))[0]) / max(now - last.get(i, (0, now - 1))[1], 1e-3); last[i] = (x.count, now)
-        pic(p, ("swatch:" + THEMES[x.colour if x.colour is not None else i - 1][3], x.transport, {0: "touchpad", 1: "pen", 2: "gamepad"}.get(x.mode, "dot")))   # their colour first
+        pic(p, ("swatch:" + (THEMES[x.colour % len(THEMES)][3] if x.colour is not None else NO_COLOUR), x.transport, {0: "touchpad", 1: "pen", 2: "gamepad"}.get(x.mode, "dot")))   # their colour first
         p.config(text=f"P{i}  RTT {x.rtt_us / 1000 if x.rtt_us and x.rtt_us > 0 else 0:4.1f}MS {rate:4.0f}/S")
     ph = current_phone(); ax, ay, aw, ah = srv.area(ph)
     inuse.config(text=(f"TABLET {ph[0]}x{ph[1]}  ->  {aw}x{ah} AT {ax},{ay}" if ph else f"AREA {aw}x{ah} AT {ax},{ay} (WAITING FOR A TABLET)"))

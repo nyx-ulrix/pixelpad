@@ -316,7 +316,7 @@ class Device:
         self.play_t = 0.0  # when the last pen packet is due to be played
         self.last_pad = None  # the last controller packet, so an unchanged one is not sent to ViGEm again
         self.touch, self.touch_failed = None, False
-        self.colour = None  # the colour the tablet shows (0-5), told to us by the tablet; None until it says
+        self.colour = None  # the colour the tablet says it is (an index, 0-15), taken only from the tablet; None until it says
         self.pen_failed = self.pad_failed = False  # log a missing driver once, not on every packet
         self.last_seen = time.time()
 
@@ -452,6 +452,7 @@ class Server:
         mode = d[0]
         if mode == PING:
             dev.rtt_us = struct.unpack(PEN_FMT, d)[4]
+            if 1 <= d[13] <= 16: dev.colour = d[13] - 1   # the phone's own colour rides in every ping (its tilt-x byte); we only record it
             aw, ah = self.area()[2:]
             out = bytearray(d); out[1] = dev.slot; out[7:11] = struct.pack("<I", (min(aw, 65535) << 16) | min(ah, 65535)); dev.send(bytes(out)); return
         if mode == HELLO:
@@ -475,7 +476,7 @@ class Server:
             elif act == 4: r["color"] = val % 6
             elif act == 5: r["thick"] = max(1, min(8, val))
             elif act == 6: self.smooth_ms = max(0, min(80, val))
-            elif act == 7: dev.colour = val % 6   # this device's colour (per device, unlike the ring settings)
+            elif act == 7: dev.colour = val if 0 <= val < 16 else dev.colour   # older apps sent the colour this way; per device, unlike the ring settings
             return
         with self.lock:
             dev.count += 1

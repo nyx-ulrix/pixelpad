@@ -254,7 +254,7 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
     private val tick = object : Runnable {
         override fun run() {
             stats = tx.stats()
-            if (Themes.index(Cfg.theme, tx.slot) != bgTheme && width > 0) { buildBackground(); invalidate() }   // the colour or our player number changed
+            if (Themes.index(Cfg.theme) != bgTheme && width > 0) { buildBackground(); invalidate() }   // the colour or our player number changed
             val key = "${stats.connected}${stats.avgUs / 1000}"
             if (key != shownKey) { // repaint only when something on screen would actually change
                 shownKey = key
@@ -316,7 +316,7 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
     /** The gradient behind everything: the colour you picked, or on AUTO the one for your player number. */
     private fun buildBackground() {
         val w = width; val h = height; if (w == 0 || h == 0) return
-        val th = Themes.current(); bgTheme = Themes.index(Cfg.theme, tx.slot)
+        val th = Themes.current(); bgTheme = Themes.index(Cfg.theme)
         val bg = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888); val c = Canvas(bg)
         val band = (6 * dp).toInt().coerceAtLeast(2)
         for (y in 0 until h step band) {

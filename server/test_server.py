@@ -107,7 +107,10 @@ send(pkt(7, 2, 0, 150), "r"); send(pkt(7, 3, 0, 1), "r"); send(pkt(7, 4, 0, 9), 
 assert srv.ring["size"] == 150 and srv.ring["style"] == 1 and srv.ring["color"] == 3 and srv.ring["on"] is False, srv.ring
 send(pkt(7, 2, 0, 5000), "r"); assert srv.ring["size"] == 300
 srv.drop("r")
-send(pkt(7, 7, 0, 2), "c"); assert srv.devices["c"].colour == 2 and srv.devices["c"].colour is not None; send(pkt(7, 7, 0, 8), "c"); assert srv.devices["c"].colour == 2   # 8 wraps to 2
+send(pkt(3), "c"); assert srv.devices["c"].colour is None                      # nothing is assigned on the PC: no colour until the tablet says
+send(pkt(3, 0, 0, 0, 0, 0, 3), "c"); assert srv.devices["c"].colour == 2        # the colour rides in every ping (byte 13 = index + 1)
+send(pkt(3, 0, 0, 0, 0, 0, 8), "c"); assert srv.devices["c"].colour == 7        # all eight Switch colours come through unchanged
+send(pkt(7, 7, 0, 5), "c"); assert srv.devices["c"].colour == 5                  # older apps sent it as a setting
 srv.drop("c")
 
 # no app-made shortcuts on the trackpad: scroll / zoom / gesture actions are gone, plain clicks remain

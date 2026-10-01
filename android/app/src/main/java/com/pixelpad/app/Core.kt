@@ -19,8 +19,8 @@ class Gesture(var name: String, var pts: FloatArray, var action: String)
 class PenButton(var name: String, var bit: Int, var action: String, var hold: Boolean = false)
 
 /**
- * The app's theme colour, in the standard Nintendo Switch colours, shared with PixelPad Desk. The first four are the player colours
- * (player 1 neon blue, 2 neon red, 3 neon green, 4 neon pink). On AUTO the theme follows your player number; or you pick any colour.
+ * The app's theme colour, in the standard Nintendo Switch colours. This device's colour is whatever it says it is: it is chosen here
+ * (or picked once at random on first use) and sent to PixelPad Desk, which only displays it. The PC never assigns a colour.
  * top/bottom make the background gradient; accent is the stronger colour used for what is selected (dark enough for white text).
  */
 object Themes {
@@ -31,9 +31,9 @@ object Themes {
         T("NEON YELLOW", 0xFFFCFFD0.toInt(), 0xFFEEF56A.toInt(), 0xFFB38F00.toInt()), T("NEON PURPLE", 0xFFF3DCFF.toInt(), 0xFFD58CF5.toInt(), 0xFF9A00C8.toInt()),
         T("NEON ORANGE", 0xFFFFEAD6.toInt(), 0xFFFFB470.toInt(), 0xFFE06A00.toInt()), T("GREY", 0xFFEDEDED.toInt(), 0xFFB5B5B5.toInt(), 0xFF6B6B6B.toInt()),
     )
-    /** Which colour a setting ("auto" or "0".."7") gives for this player slot (1-4; 0 = not connected yet, treated as player 1). */
-    fun index(theme: String, slot: Int) = if (theme == "auto") (slot - 1).coerceAtLeast(0) % 4 else (theme.toIntOrNull() ?: 0).coerceIn(0, list.size - 1)
-    fun current(): T = list[index(Cfg.theme, Core.sender.slot)]
+    /** The colour a setting ("0".."7") means. */
+    fun index(theme: String) = (theme.toIntOrNull() ?: 0).coerceIn(0, list.size - 1)
+    fun current(): T = list[index(Cfg.theme)]
 }
 
 /** A PC you have paired with. You choose its name; its address is kept so the app can reach it, but it is never shown. */
@@ -73,6 +73,7 @@ object Cfg {
             for (i in 0 until a.length()) a.getJSONObject(i).let { pcs.add(SavedPc(it.getString("name"), it.getString("host"), it.getInt("port"))) }
         }
         if (pcs.isEmpty() && host.isNotBlank()) { pcs.add(SavedPc("MY PC", host, port)); savePcs() }   // a PC saved before PCs had names
+        if (theme.toIntOrNull() == null) theme = (0 until 4).random().toString()   // first use, or the old "auto": pick one of the four player colours once; after that it only changes when you change it
     }
 
     fun savePcs() = prefs.edit().putString("pcs", JSONArray().apply { pcs.forEach { put(JSONObject().put("name", it.name).put("host", it.host).put("port", it.port)) } }.toString()).apply()
@@ -127,7 +128,7 @@ object Cfg {
     }
 
     // connection
-    var theme by P("theme", "auto")          // background colour: "auto" (your player colour) or an index into Themes.list
+    var theme by P("theme", "")              // this device's colour: an index into Themes.list (empty until first use, when one is picked at random)
     var transport by P("transport", "wifi")  // usb | wifi | bt (Wi-Fi with the QR code is the easy way in)
     var host by P("host", "")
     var port by P("port", 7777)
@@ -303,5 +304,8 @@ object Core {
     fun visible(delta: Int) { onScreen = (onScreen + delta).coerceAtLeast(0); sender.active = onScreen > 0 }
 
     /** Points the sender at whatever the settings say. Call after any connection setting changes. */
-    fun applyConnection() = sender.configure(Cfg.transport != "usb", Cfg.host, Cfg.port)
+    fun applyConnection() { applyColour(); sender.configure(Cfg.transport != "usb", Cfg.host, Cfg.port) }
+
+    /** Hands this device's colour to the sender, which puts it in every heartbeat so the PC always shows the real one. */
+    fun applyColour() { sender.colourIndex = Themes.index(Cfg.theme) }
 }

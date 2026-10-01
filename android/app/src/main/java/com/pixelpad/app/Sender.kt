@@ -70,9 +70,8 @@ class Sender(private val usbPort: Int = 7777) {
 
     /** Tells the PC how to draw its pen cursor ring. Only once the user has changed something here. */
     /** How much the PC evens out the timing of pen packets (a small fixed delay, in ms). */
-    private var colourSent = -1
-    /** Tells the PC which colour this device is, so PixelPad Desk can show each player in theirs. */
-    fun syncColour() { val i = Themes.index(Cfg.theme, slot); pen(7, 7, 0, i, 0); colourSent = i }
+    /** This device's colour (an index into Themes.list). It rides in every ping, so PixelPad Desk is always told, even after a restart or a lost packet. */
+    @Volatile var colourIndex = 0
 
     fun syncSmooth() = pen(7, 6, 0, when (Cfg.smooth) { 0 -> 0; 1 -> 10; 2 -> 20; else -> 40 }, 0)
 
@@ -140,11 +139,10 @@ class Sender(private val usbPort: Int = 7777) {
                 Thread.sleep(500)
                 if (!active) { dirty = true; continue }   // nothing on screen: stay quiet
                 val c = connected(); if (c && !wasConnected) { syncRing(); syncSmooth() }; wasConnected = c
-                if (!c) colourSent = -1 else if (Themes.index(Cfg.theme, slot) != colourSent) syncColour()   // on connect, and whenever the colour (or our player number) changes
                 val now = System.nanoTime(); val n = sent.get()
                 rate = ((n - lastSent) * 1e9 / (now - lastAt)).toInt(); lastSent = n; lastAt = now
                 if (++beat % 4 == 0) Log.d("PixelPad", "link ${if (wifi) "udp" else "usb tcp"} connected=$c sent=$n rtt=${lastRttUs}us queue=${q.size} error='$lastError'")
-                put(ByteBuffer.allocate(16).order(ByteOrder.LITTLE_ENDIAN).put(PING.toByte()).put(0).put(0).putInt(0).putInt(lastRttUs))
+                put(ByteBuffer.allocate(16).order(ByteOrder.LITTLE_ENDIAN).put(PING.toByte()).put(0).put(0).putInt(0).putInt(lastRttUs).putShort(0).put((colourIndex + 1).toByte()))   // byte 13: our colour + 1
                 if (padW > 0) put(ByteBuffer.allocate(16).order(ByteOrder.LITTLE_ENDIAN).put(HELLO.toByte()).put(0).put(0).putInt(padW).putInt(padH))
             }
         }.apply { isDaemon = true }.start()

@@ -578,9 +578,9 @@ class SettingsActivity : Activity() {
             note("USE A TABLET WITH A PEN AS A TRACKPAD, A DRAWING TABLET, A CONTROLLER AND A PRESENTER FOR YOUR PC."),
             note("LOCK: ON ANY SCREEN, DOUBLE-TAP THE LOCK ICON AT THE TOP LEFT. THE SCREEN GOES DARK AND MINIMAL (STILL IN THE SAME COLOURS), THE TOP BAR STOPS RESPONDING, AND YOU KEEP WHAT YOU NEED: THE PEN, YOUR TABLET BUTTONS, THE CONTROLLER OR THE PREV / NEXT BUTTONS. DOUBLE-TAP AGAIN TO UNLOCK.")))
         content.addView(card("THEME COLOUR", BABY,
-            chooser("PICK A COLOUR, OR USE AUTO", listOf("AUTO: BY PLAYER" to "auto") + Themes.list.mapIndexed { i, t -> t.name to i.toString() },
-                { Cfg.theme }, { Cfg.theme = it; Core.sender.syncColour(); applyTheme(); show(8) }, fills = Themes.list.mapIndexed { i, t -> i.toString() to t.bottom }.toMap()),
-            note("THE COLOUR YOU PICK BECOMES THE THEME OF THE APP. ON AUTO, PLAYER 1 IS NEON BLUE, PLAYER 2 NEON RED, PLAYER 3 NEON GREEN AND PLAYER 4 NEON PINK. PIXELPAD DESK SHOWS EACH PLAYER IN THEIR COLOUR.")))
+            chooser("THIS DEVICE'S COLOUR", Themes.list.mapIndexed { i, t -> t.name to i.toString() },
+                { Cfg.theme }, { Cfg.theme = it; Core.applyColour(); applyTheme(); show(8) }, fills = Themes.list.mapIndexed { i, t -> i.toString() to t.bottom }.toMap()),
+            note("THE COLOUR YOU PICK BECOMES THE THEME OF THE APP, AND IS THIS DEVICE'S COLOUR. PIXELPAD DESK SHOWS IT NEXT TO THIS DEVICE'S PLAYER NUMBER; THE PC NEVER CHOOSES IT.")))
         content.addView(card("RESET", PINK, pill("RESET EVERYTHING", PAPER, icon = "retry") {
             AlertDialog.Builder(this).setTitle("RESET ALL SETTINGS?").setMessage("THIS CLEARS EVERY SETTING, BUTTON, GESTURE AND LAYOUT.")
                 .setPositiveButton("RESET") { _, _ -> Cfg.prefs.edit().clear().apply(); Cfg.pcs.clear(); Cfg.keys.clear(); Cfg.seedKeys(); Cfg.gestures.clear(); Cfg.penButtons.clear(); Cfg.resetPenButtons(); Core.applyConnection(); show(8) }
