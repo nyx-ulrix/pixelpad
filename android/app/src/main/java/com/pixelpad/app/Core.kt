@@ -2,6 +2,7 @@ package com.pixelpad.app
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.view.InputDevice
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
@@ -73,6 +74,7 @@ object Cfg {
             for (i in 0 until a.length()) a.getJSONObject(i).let { pcs.add(SavedPc(it.getString("name"), it.getString("host"), it.getInt("port"))) }
         }
         if (pcs.isEmpty() && host.isNotBlank()) { pcs.add(SavedPc("MY PC", host, port)); savePcs() }   // a PC saved before PCs had names
+        if (!prefs.contains("fingerDraw")) fingerDraw = !hasStylus()   // first run: no stylus on this device = fingers may draw
         if (theme.toIntOrNull() == null) theme = (0 until 4).random().toString()   // first use, or the old "auto": pick one of the four player colours once; after that it only changes when you change it
     }
 
@@ -142,6 +144,7 @@ object Cfg {
     var gamma by P("gamma", 1f)              // pressure curve: 1 = raw, below 1 = softer, above 1 = firmer
     var pressMin by P("pressMin", 0f)        // click threshold: pressure needed before the pen counts as touching
     var tiltOn by P("tiltOn", true)
+    var fingerDraw by P("fingerDraw", false)  // tablet mode: a finger draws like a pen too (for devices with no stylus); off = pen only
     var palmReject by P("palmReject", true)  // tablet mode: ignore fingers and palms (on the buttons and top bar) while the pen is near
     var smooth by P("smooth", 2)             // stroke smoothing: 0 off, 1 low, 2 medium, 3 high (filters pen jitter here, evens out arrival times on the PC)
     var hoverRange by P("hoverRange", 100)   // % of the pen's hover distance that counts
@@ -178,8 +181,13 @@ object Cfg {
 
     fun resetTablet() {
         ax = 0f; ay = 0f; aw = 1f; ah = 1f; keepShape = true; rotation = 0; flipX = false; flipY = false
-        gamma = 1f; pressMin = 0f; tiltOn = true; smooth = 2; hoverRange = 100; linger = 150; tabletRel = false; palmReject = true
+        gamma = 1f; pressMin = 0f; tiltOn = true; smooth = 2; hoverRange = 100; linger = 150; tabletRel = false; palmReject = true; fingerDraw = !hasStylus()
     }
+
+    /** Does this device report a stylus? If not, finger drawing starts switched on. */
+    fun hasStylus(): Boolean = runCatching {
+        InputDevice.getDeviceIds().any { id -> InputDevice.getDevice(id)?.let { it.sources and InputDevice.SOURCE_STYLUS == InputDevice.SOURCE_STYLUS } == true }
+    }.getOrDefault(true)
 }
 
 /** Key names <-> Windows virtual-key codes, so shortcuts like "ctrl+shift+z" can be sent as (modifiers, key). */

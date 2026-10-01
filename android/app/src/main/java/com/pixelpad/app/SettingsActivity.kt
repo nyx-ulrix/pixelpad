@@ -337,10 +337,13 @@ class SettingsActivity : Activity() {
         content.addView(card("ORIENTATION", GREEN,
             chooser("ROTATE", listOf("0°" to "0", "90°" to "1", "180°" to "2", "270°" to "3"), { Cfg.rotation.toString() }, { Cfg.rotation = it.toInt(); editor.invalidate(); editor.report() }),
             toggle("FLIP LEFT-RIGHT", { Cfg.flipX }, { Cfg.flipX = it }), toggle("FLIP UP-DOWN", { Cfg.flipY }, { Cfg.flipY = it })))
+        content.addView(card("WHAT DRAWS", GREEN,
+            chooser("IN THE TABLET AREA", listOf("PEN ONLY" to "pen", "PEN OR FINGER" to "finger"), { if (Cfg.fingerDraw) "finger" else "pen" }, { Cfg.fingerDraw = it == "finger" }),
+            note("PEN ONLY: ONLY A STYLUS DRAWS (A FINGER CAN STILL USE YOUR BUTTONS). PEN OR FINGER: A FINGER DRAWS LIKE A PEN TOO, FOR DEVICES WITHOUT A STYLUS. IT STARTS ON IF THIS DEVICE REPORTS NO STYLUS.")))
         content.addView(card("PALM REJECTION", LILAC,
             toggle("IGNORE FINGERS AND PALMS WHILE THE PEN IS NEAR", { Cfg.palmReject }, { Cfg.palmReject = it }),
-            note("ON: IN TABLET MODE, TOUCHES ON YOUR BUTTONS AND THE TOP BAR ARE IGNORED WHILE THE PEN IS HOVERING OR WRITING, AND FOR A MOMENT AFTER, SO A RESTING PALM CAN'T PRESS THEM. OFF: A FINGER CAN USE THEM EVEN WHILE THE PEN IS NEAR. THE DRAWING AREA IS ALWAYS PEN ONLY.")))
-        content.addView(card("RESET", PINK, pill("RESET ALL TABLET SETTINGS", PAPER, icon = "retry") { confirm("RESET TABLET SETTINGS?", "AREA, ORIENTATION, PRESSURE, SMOOTHING AND HOVER GO BACK TO DEFAULTS. YOUR PEN BUTTONS AND TABLET KEYS ARE KEPT.") { Cfg.resetTablet(); show(2) } }))
+            note("ON: A FINGER OR PALM IS IGNORED WHILE THE PEN IS HOVERING OR WRITING, AND FOR A MOMENT AFTER, SO A RESTING PALM CAN'T DRAW OR PRESS YOUR BUTTONS. OFF: FINGERS ARE NEVER IGNORED. WITH NO PEN IN USE, A FINGER ALWAYS WORKS.")))
+        content.addView(card("RESET", PINK, pill("RESET ALL TABLET SETTINGS", PAPER, icon = "retry") { confirm("RESET TABLET SETTINGS?", "AREA, ORIENTATION, PRESSURE, SMOOTHING, HOVER, FINGER DRAWING AND PALM REJECTION GO BACK TO DEFAULTS. YOUR PEN BUTTONS AND TABLET KEYS ARE KEPT.") { Cfg.resetTablet(); show(2) } }))
         every(1000) { editor.report() }
     }
 

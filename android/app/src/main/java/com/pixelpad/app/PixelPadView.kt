@@ -381,7 +381,7 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
             sampleT = if (hist) e.getHistoricalEventTime(h) else e.eventTime
             val x = if (hist) e.getHistoricalX(i, h) else e.getX(i)
             val y = if (hist) e.getHistoricalY(i, h) else e.getY(i)
-            val pr = if (hist) e.getHistoricalPressure(i, h) else e.getPressure(i)
+            val pr = if (e.getToolType(i) != TOOL_TYPE_STYLUS) 0.7f * pm else if (hist) e.getHistoricalPressure(i, h) else e.getPressure(i)   // a finger has no pressure: a steady middling one
             val t = Math.toDegrees((if (hist) e.getHistoricalAxisValue(MotionEvent.AXIS_TILT, i, h) else e.getAxisValue(MotionEvent.AXIS_TILT, i)).toDouble())
             val o = (if (hist) e.getHistoricalOrientation(i, h) else e.getOrientation(i)).toDouble()
             f(x, y, pr / pm, (t * sin(o)).toInt().coerceIn(-90, 90), (-t * cos(o)).toInt().coerceIn(-90, 90))
@@ -397,7 +397,7 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
         val now = SystemClock.uptimeMillis()
         if (i >= 0) { lastStylusMs = now; lastPenMs = now; trackPenButtons(e.buttonState) }
         // a finger next to a pen is probably a palm. In tablet mode this is the palm rejection setting: on = fingers and palms are ignored
-        // while the pen is near (hovering or writing) and for a moment after; off = no guard, so a finger can use the buttons any time
+        // while the pen is near (hovering or writing) and for a moment after; off = no guard. (With no pen about, a finger is never ignored.)
         val palmMs = if (mode == TABLET) (if (Cfg.palmReject) 1200L else 0L) else 250L
         val penOk = i >= 0 || palmMs == 0L || now - lastStylusMs > palmMs
         if (mode == TABLET && Cfg.palmReject && i < 0 && (!penOk || e.getToolType(e.actionIndex) == 5 /* palm */)) return true
@@ -422,6 +422,7 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
         if (a == MotionEvent.ACTION_DOWN) { fBar = if (locked) (mode == PRESENT && uiHit(e.x, e.y)) else if (e.y < barH) { bar(e.x); true } else uiHit(e.x, e.y) }
         if (fBar) return true
         if (mode == TRACKPAD || mode == PRESENT) fingerTouch(e)
+        else if (mode == TABLET && Cfg.fingerDraw) return stylusTouch(e, 0)   // "pen or finger": a finger draws like a pen (for devices with no stylus)
         return true
     }
 
