@@ -603,11 +603,11 @@ class SettingsActivity : Activity() {
         fun busy(msg: String, pct: Int = -1) { status.text = msg.uppercase(); btn.isEnabled = false; btn.alpha = .5f; bar.visibility = if (pct >= 0) View.VISIBLE else View.GONE; bar.pct = pct }
         fun install() {
             val r = found ?: return
+            try { stopLockTask() } catch (e: Exception) {}   // a pinned app can't open Android's own screens (the permission page, the installer)
             if (!Updater.canInstall(this)) {
                 afterAllow = { install() }
                 idle("ANDROID WANTS YOUR OK FIRST: TURN ON ALLOW FROM THIS SOURCE FOR PIXELPAD, THEN COME BACK AND THE UPDATE STARTS"); Updater.askPermission(this); return
             }
-            try { stopLockTask() } catch (e: Exception) {}   // the installer can't open over a pinned app
             Updater.onResult = { msg -> idle(msg) }
             busy("DOWNLOADING 0%", 0)
             Updater.install(this, r, { got, total ->
@@ -633,7 +633,7 @@ class SettingsActivity : Activity() {
         btn.setOnClickListener { if (found != null) install() else check() }
         idle("YOU HAVE VERSION $have"); check()
         return card("UPDATES", GREEN, label("PIXELPAD $have", 12f), status, bar.also { it.layoutParams = lp(h = dp(16)) }, btn,
-            note("PIXELPAD ASKS ABOUT A NEW VERSION ONCE WHEN YOU OPEN THE APP. UPDATING DOWNLOADS THE APK FROM THE LATEST GITHUB RELEASE AND ANDROID ASKS YOU TO CONFIRM THE INSTALL. THE APP RESTARTS WHEN IT IS DONE."))
+            note("PIXELPAD ASKS ABOUT A NEW VERSION ONCE WHEN YOU OPEN THE APP. UPDATING DOWNLOADS THE APK FROM THE LATEST GITHUB RELEASE AND ANDROID ASKS YOU TO CONFIRM THE INSTALL. THE APP UNPINS ITSELF FIRST (ANDROID CAN'T SHOW ITS OWN SCREENS OVER A PINNED APP), AND ANDROID MAY LOCK THE SCREEN WHEN IT DOES: UNLOCK IT AND TAP INSTALL. THE APP RESTARTS WHEN IT IS DONE."))
     }
 
     /** A thin retro progress bar. */
