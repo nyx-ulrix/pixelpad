@@ -3,6 +3,8 @@ package com.pixelpad.app
 import android.content.Context
 import android.content.SharedPreferences
 import android.view.InputDevice
+import android.view.inputmethod.InputMethodManager
+import android.widget.EditText
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
@@ -41,6 +43,13 @@ object Themes {
 class SavedPc(var name: String, var host: String, var port: Int)
 
 /** Everything the user can change. Values are saved as soon as they are set, and the main screen reads them live. */
+/** A pen that shows up as a hardware keyboard (Xiaomi Focus Pen) makes Gboard hide its keys behind a small floating button, so ask for the keyboard outright. */
+fun EditText.alwaysKeyboard() {
+    fun show() { (context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(this, InputMethodManager.SHOW_FORCED) }
+    setOnFocusChangeListener { _, f -> if (f) post { show() } }
+    setOnClickListener { show() }
+}
+
 object Cfg {
     lateinit var prefs: SharedPreferences
     val keys = ArrayList<ExpressKey>()

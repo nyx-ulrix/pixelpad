@@ -154,6 +154,7 @@ class SettingsActivity : Activity() {
         typeface = mono; setTextColor(INK); setHintTextColor(0x802F6FE0.toInt()); textSize = 13f; this.hint = hint; setText(value); setSingleLine()
         background = shape(PAPER, dp(4)); setPadding(dp(10), dp(8), dp(10), dp(8))
         if (numeric) inputType = InputType.TYPE_CLASS_NUMBER
+        alwaysKeyboard()
     }
 
     // ---------- shell ----------

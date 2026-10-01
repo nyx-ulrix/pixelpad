@@ -170,7 +170,7 @@ class ScanActivity : Activity() {
         waiting = true
         val field = EditText(this).apply {
             typeface = mono; setTextColor(INK); textSize = 14f; setSingleLine(); setText(qrName.ifEmpty { "MY PC" }.take(20)); selectAll()
-            background = shape(PAPER, dp(4)); setPadding(dp(10), dp(8), dp(10), dp(8))
+            background = shape(PAPER, dp(4)); setPadding(dp(10), dp(8), dp(10), dp(8)); alwaysKeyboard()
         }
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(14), dp(16), dp(8)); background = shape(PAPER, dp(4))
