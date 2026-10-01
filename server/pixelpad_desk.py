@@ -192,7 +192,7 @@ for p in players: p.pack(fill="x")
 label(a, text="UP TO 4 DEVICES = 4 CONTROLLERS", font=FS).pack(fill="x", side="bottom")
 
 # ---------- window: control area (map of the PC screen) ----------
-b = window("area", "WHERE THE TABLET REACHES", LILAC, "crop")
+b = window("area", "WHERE THE CONTROLLER DEVICE REACHES", LILAC, "crop")
 mrow = tk.Frame(b, bg=PAPER); mrow.pack(fill="x")
 mode_pills = {}
 def fit_custom():
@@ -212,7 +212,7 @@ scr_var = tk.StringVar(value=screens[screen_idx[0] if screen_idx[0] < len(screen
 scr_menu = tk.OptionMenu(mrow, scr_var, *[n for n, _ in screens], command=pick_screen)
 scr_menu.config(bg=PAPER, fg=INK, font=FS, highlightbackground=INK, relief="solid"); scr_menu.pack(side="right")
 keep_shape = tk.BooleanVar(value=True)
-keep_btn = tk.Checkbutton(b, text=" KEEP TABLET SHAPE WHILE RESIZING", variable=keep_shape, bg=PAPER, fg=INK, font=FS, selectcolor=LILAC, activebackground=PAPER, anchor="w"); pic(keep_btn, "lock")
+keep_btn = tk.Checkbutton(b, text=" KEEP CONTROLLER DEVICE SHAPE WHILE RESIZING", variable=keep_shape, bg=PAPER, fg=INK, font=FS, selectcolor=LILAC, activebackground=PAPER, anchor="w"); pic(keep_btn, "lock")
 keep_btn.pack(fill="x")
 inuse = label(b, font=FS, fg=HOT); inuse.pack(fill="x", side="bottom")
 srow = tk.Frame(b, bg=PAPER); srow.pack(fill="x", side="bottom", pady=(4, 2))
@@ -350,12 +350,12 @@ def compute_ips():
 ips = compute_ips()
 ip = tk.StringVar(value=ips[0] if ips else "")   # the address inside the QR code; it is never drawn as text
 net = tk.StringVar(value="NETWORK 1")
-label(d, text="THE TABLET SCANS THIS ON START, OR: SETTINGS > CONNECTION > SCAN", font=FS, wraplength=int(300 * SC)).pack(fill="x", side="bottom")
+label(d, text="THE CONTROLLER DEVICE SCANS THIS ON START, OR: SETTINGS > CONNECTION > SCAN", font=FS, wraplength=int(300 * SC)).pack(fill="x", side="bottom")
 flow = label(d); pic(flow, ("present", "right", "qr", "right", "camera", "right", "check"), INK, int(26 * SC)); flow.pack(side="bottom")
 menu = tk.OptionMenu(d, net, "NETWORK 1"); menu.config(bg=PAPER, fg=INK, font=FS, highlightbackground=INK, relief="solid")
 # the name the QR code carries: the tablet offers it as the default when you save this PC (you can still change it there)
 nrow = tk.Frame(d, bg=PAPER); nrow.pack(fill="x", side="top", pady=(0, 6))
-nl = label(nrow, text=" NAME ON THE TABLET"); pic(nl, "present"); nl.pack(side="left")
+nl = label(nrow, text=" NAME ON THE CONTROLLER DEVICE"); pic(nl, "present"); nl.pack(side="left")
 name_entry = tk.Entry(nrow, textvariable=pc_name, font=F, relief="solid"); name_entry.pack(side="left", fill="x", expand=True, padx=(8, 0))
 def commit_name(_=None):
     pc_name.set(pc_name.get().strip()[:20] or "MY PC"); save()
@@ -409,13 +409,13 @@ ip.trace_add("write", draw_qr); pc_name.trace_add("write", draw_qr_soon); qr.bin
 st = window("settings", "SETTINGS", BABY, "gear")
 custom, speed = tk.StringVar(value=",".join(map(str, srv.custom))), tk.StringVar(value=str(srv.speed))
 grid = tk.Frame(st, bg=PAPER); grid.pack(fill="x")
-g0 = label(grid, text=" TABLET AREA X,Y,W,H"); pic(g0, "crop"); g0.grid(row=0, column=0, sticky="w", pady=2)
+g0 = label(grid, text=" CONTROLLER DEVICE AREA X,Y,W,H"); pic(g0, "crop"); g0.grid(row=0, column=0, sticky="w", pady=2)
 tk.Entry(grid, textvariable=custom, width=24, font=F, relief="solid").grid(row=0, column=1, padx=8)
 g1 = label(grid, text=" RELATIVE PEN SPEED"); pic(g1, "cursor"); g1.grid(row=1, column=0, sticky="w", pady=2)
 tk.Entry(grid, textvariable=speed, width=24, font=F, relief="solid").grid(row=1, column=1, padx=8)
 g2 = label(grid, text=" PORT (USB TCP / WI-FI UDP)"); pic(g2, ("usb", "wifi")); g2.grid(row=2, column=0, sticky="w", pady=2)
 label(grid, text=str(PORT)).grid(row=2, column=1, sticky="w", padx=8)
-g3 = label(grid, text=" THIS PC'S NAME (SHOWN ON THE TABLET)"); pic(g3, "present"); g3.grid(row=3, column=0, sticky="w", pady=2)
+g3 = label(grid, text=" THIS PC'S NAME (SHOWN ON THE CONTROLLER DEVICE)"); pic(g3, "present"); g3.grid(row=3, column=0, sticky="w", pady=2)
 tk.Entry(grid, textvariable=pc_name, width=24, font=F, relief="solid").grid(row=3, column=1, padx=8)
 
 def apply():
@@ -559,7 +559,7 @@ auto_pill = pill(brow, "START WITH WINDOWS", toggle_autostart, LILAC, "windows")
 pill(brow, "QUIT PIXELPAD DESK", lambda: quit_app(), PINK, "power").pack(side="left", padx=(0, 6))
 def toggle_record():
     srv.allow_record = not srv.allow_record; flag(rec_pill, "keyboard", srv.allow_record); save()
-rec_pill = pill(brow, "TABLET MAY RECORD SHORTCUTS", toggle_record, BABY, "keyboard"); flag(rec_pill, "keyboard", srv.allow_record); rec_pill.pack(side="left")
+rec_pill = pill(brow, "CONTROLLER DEVICES MAY RECORD SHORTCUTS", toggle_record, BABY, "keyboard"); flag(rec_pill, "keyboard", srv.allow_record); rec_pill.pack(side="left")
 hint(st, "CLOSING THE WINDOW KEEPS PIXELPAD RUNNING IN THE TRAY (BOTTOM RIGHT OF THE TASKBAR).", wrap=700).pack(fill="x", pady=(0, 8))
 label(st, text="LOG").pack(fill="x")
 out = scrolledtext.ScrolledText(st, height=6, font=FS, bg=PAPER, fg=INK, relief="solid"); out.pack(fill="both", expand=True)
@@ -573,7 +573,7 @@ ns.log = log
 
 # ---------- toolbar buttons ----------
 bar_pills = {}
-for key, ic, txt in (("connect", "qr", "CONNECT"), ("status", "pulse", "STATUS"), ("checklist", "check", "CHECKLIST"), ("area", "crop", "TABLET AREA")):
+for key, ic, txt in (("connect", "qr", "CONNECT"), ("status", "pulse", "STATUS"), ("checklist", "check", "CHECKLIST"), ("area", "crop", "DEVICE AREA")):
     bar_pills[key] = pill(bar, txt, lambda k=key: set_visible(k, not reg[k]["visible"]), reg[key]["color"], ic)
     bar_pills[key].pack(side="left", padx=int(4 * SC), pady=int(3 * SC))
 
@@ -612,7 +612,7 @@ def _tick():
         pic(p, ("swatch:" + (THEMES[x.colour % len(THEMES)][3] if x.colour is not None else NO_COLOUR), x.transport, {0: "touchpad", 1: "pen", 2: "gamepad"}.get(x.mode, "dot")))   # their colour first
         p.config(text=f"P{i}  RTT {x.rtt_us / 1000 if x.rtt_us and x.rtt_us > 0 else 0:4.1f}MS {rate:4.0f}/S")
     ph = current_phone(); ax, ay, aw, ah = srv.area(ph)
-    inuse.config(text=(f"TABLET {ph[0]}x{ph[1]}  ->  {aw}x{ah} AT {ax},{ay}" if ph else f"AREA {aw}x{ah} AT {ax},{ay} (WAITING FOR A TABLET)"))
+    inuse.config(text=(f"DEVICE {ph[0]}x{ph[1]}  ->  {aw}x{ah} AT {ax},{ay}" if ph else f"AREA {aw}x{ah} AT {ax},{ay} (WAITING FOR A CONTROLLER DEVICE)"))
     sig = (srv.area(ph), srv.monitor, srv.area_mode)
     if page == "dash" and reg["area"]["visible"] and not drag and sig != map_sig[0]: map_sig[0] = sig; draw_map()
     update_overlay()

@@ -485,7 +485,7 @@ class Server:
             if d[1] == 0: self.recorder.cancel()
             elif not self.allow_record: answer(3)
             else:
-                log("recording a shortcut for the tablet: press it on this keyboard")
+                log("recording a shortcut for the controller device: press it on this keyboard")
                 if not self.recorder.start(lambda res: answer(1, res[0], res[1]) if res else answer(2)): answer(2)
             return
         if mode == CONFIG:
@@ -659,9 +659,9 @@ def diagnose(srv, port):
                   "Install Android platform-tools, or set the ANDROID_HOME variable." ))
         lines = [l.split() for l in (adb("devices") or "").splitlines()[1:] if l.strip()]
         ready = [l for l in lines if l[-1] == "device"]; unauth = [l for l in lines if l[-1] == "unauthorized"]
-        if ready: r.append(("ok", "TABLET SEEN OVER USB", ""))   # not its serial number
-        elif unauth: r.append(("fail", "TABLET FOUND BUT NOT ALLOWED", "Look at the tablet and tap ALLOW on the USB debugging prompt."))
-        else: r.append(("fail", "NO TABLET OVER USB", "Use a data cable, turn on USB debugging (Developer options), then re-check. Wi-Fi works without a cable."))
+        if ready: r.append(("ok", "CONTROLLER DEVICE SEEN OVER USB", ""))   # not its serial number
+        elif unauth: r.append(("fail", "CONTROLLER DEVICE FOUND BUT NOT ALLOWED", "Look at the controller device and tap ALLOW on the USB debugging prompt."))
+        else: r.append(("fail", "NO CONTROLLER DEVICE OVER USB", "Use a data cable, turn on USB debugging (Developer options), then re-check. Wi-Fi works without a cable."))
         rev = f"tcp:{PHONE_PORT} tcp:{port}" in (adb("reverse", "--list") or "")
         r.append(("ok" if rev else "warn", "USB LINK IS SET UP" if rev else "USB LINK NOT SET UP", "Press RECONNECT USB."))
     busy = "Could not open a port. " + " ".join(srv.bind_errors)
@@ -681,16 +681,16 @@ def diagnose(srv, port):
               "Only needed for controller mode. Install ViGEmBus from github.com/nefarius/ViGEmBus/releases."))
     devs = list(srv.devices.values())
     if devs: r.append(("ok", f"{len(devs)} DEVICE(S) TALKING TO THIS PC", ""))
-    else: r.append(("fail", "NOTHING RECEIVED FROM THE TABLET", "Open PixelPad on the tablet and check Settings > Connection. Over Wi-Fi/Bluetooth: scan the QR code, and allow PixelPad Desk through Windows Firewall."))
+    else: r.append(("fail", "NOTHING RECEIVED FROM THE CONTROLLER DEVICE", "Open PixelPad on the controller device and check Settings > Connection. Over Wi-Fi/Bluetooth: scan the QR code, and allow PixelPad Desk through Windows Firewall."))
     if srv.last_error: r.append(("warn", "LAST ERROR: " + srv.last_error.upper(), ""))
     how = "WI-FI" if wifi_only else "USB" if devs and all(d.transport == "usb" for d in devs) else "USB + WI-FI"
-    r.insert(0, ("ok", f"CONNECTED: {len(devs)} DEVICE(S) OVER {how}", "") if devs else ("warn", "WAITING FOR THE TABLET", ""))
+    r.insert(0, ("ok", f"CONNECTED: {len(devs)} DEVICE(S) OVER {how}", "") if devs else ("warn", "WAITING FOR A CONTROLLER DEVICE", ""))
     return r
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="PixelPad Desk (command line)")
     ap.add_argument("--port", type=int, default=7777, help="first port to try; the next free one is used if it is busy")
-    ap.add_argument("--area", help="map the tablet to a fixed rectangle x,y,w,h in pixels (default: the whole main screen)")
+    ap.add_argument("--area", help="map the controller device to a fixed rectangle x,y,w,h in pixels (default: the whole main screen)")
     ap.add_argument("--speed", type=float, default=1.0, help="relative pen speed multiplier")
     a = ap.parse_args()
     srv = Server(monitors()[0], a.speed)
@@ -698,5 +698,5 @@ if __name__ == "__main__":
     port = srv.open(a.port)
     if port:
         adb_reverse(port); srv.run()
-        log(f"PixelPad Desk ready on port {port}. Tablet area: {srv.area()}")
+        log(f"PixelPad Desk ready on port {port}. Controller device area: {srv.area()}")
         while True: time.sleep(3600)
