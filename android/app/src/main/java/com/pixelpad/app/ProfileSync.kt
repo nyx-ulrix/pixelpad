@@ -18,6 +18,7 @@ class ProfileSync(private val send: (ByteArray) -> Unit, private val after: (Lon
 
     /** Called (on the UI thread) when the PC says a linked game started: the profile number to use and the game's name. */
     @Volatile var onSwitch: ((Int, String) -> Unit)? = null
+    @Volatile private var lastSeq = 0L   // which start of a game we last followed: the PC repeats a notice to a device that reconnects, and that is not a new start
 
     private fun chunks(op: Int, mid: Int, text: String): List<ByteArray> {
         val data = text.toByteArray(Charsets.UTF_8)
@@ -66,6 +67,9 @@ class ProfileSync(private val send: (ByteArray) -> Unit, private val after: (Lon
         }
         if (op == 0x85) {
             val a = text.split("\n"); val id = a.getOrNull(0)?.toIntOrNull() ?: return true
+            val seq = a.getOrNull(2)?.toLongOrNull() ?: 0L
+            if (seq != 0L && seq == lastSeq) return true
+            lastSeq = seq
             ui { onSwitch?.invoke(id, a.getOrNull(1) ?: "") }
         } else synchronized(this) { pending[mid]?.takeIf { it.reply == op } }?.let { p -> synchronized(this) { pending.remove(mid) }; ui { p.done(text) } }
         return true
@@ -78,11 +82,13 @@ class ProfileSync(private val send: (ByteArray) -> Unit, private val after: (Lon
         done(t?.split("\n")?.mapNotNull { l -> l.split("\t").takeIf { it.size == 2 }?.let { a -> a[0].toIntOrNull()?.let { it to a[1] } } })
     }
 
-    /** One profile, or null if there is no such profile or the PC didn't answer. */
-    fun get(id: Int, done: (RemoteProfile?) -> Unit) = request(2, id.toString(), 0x82) { t ->
+    /** One profile, or null if there is no such profile or the PC didn't answer; the second value says whether the PC answered at all. */
+    fun getFull(id: Int, done: (RemoteProfile?, Boolean) -> Unit) = request(2, id.toString(), 0x82) { t ->
         val a = t?.split("\n")
-        done(if (a != null && a.size == 4) a[0].toIntOrNull()?.let { RemoteProfile(it, a[1], a[2], a[3]) } else null)
+        done(if (a != null && a.size == 4) a[0].toIntOrNull()?.let { RemoteProfile(it, a[1], a[2], a[3]) } else null, t != null)
     }
+
+    fun get(id: Int, done: (RemoteProfile?) -> Unit) = getFull(id) { p, _ -> done(p) }
 
     /** Saves a profile (id 0 = a new one) and returns its number, or 0 if the PC refused it or didn't answer. */
     fun put(name: String, template: String, layout: String, id: Int, done: (Int) -> Unit) =

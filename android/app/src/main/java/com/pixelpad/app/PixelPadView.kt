@@ -47,6 +47,8 @@ private val WARN = 0xFFB0206E.toInt()
 /** One on-screen controller control. Position and size are fractions of the pad area, so layouts survive rotation. */
 private class Ctl(val id: String, val label: String, val bit: Int, var fx: Float, var fy: Float, var fr: Float, val color: Int,
                   val icon: String? = null, val visible: Boolean = true) {
+    /** On screen right now: the template's default, unless you showed or hid it in the layout editor. */
+    var shown = visible
     val isStick get() = bit <= -10
     /** Controls of a kind are sized together, so a tight d-pad doesn't shrink the sticks: 0 face, 1 d-pad, 2 shoulders, 3 sticks, 4 menu, 5 stick clicks. */
     val group get() = when (id) { "tri", "x", "sq", "ci" -> 0; "up", "dn", "lf", "rt" -> 1; "l1", "r1", "l2", "r2" -> 2; "sl", "sr" -> 3; "l3", "r3" -> 5; else -> 4 }
@@ -192,15 +194,17 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
 
     private fun loadTemplate(name: String) {
         tpl = name; Cfg.tpl = name
-        ctls.clear(); ctls.addAll(template(name)); visCache = ctls.filter { it.visible }
+        ctls.clear(); ctls.addAll(template(name))
         val saved = prefs.getString(layoutKey(), "") ?: ""
         autoFit = saved.isEmpty()
         saved.split(";").forEach { s ->
             val a = s.split(":")
-            if (a.size == 4) ctls.find { it.id == a[0] }?.apply {
+            if (a.size == 4 || a.size == 5) ctls.find { it.id == a[0] }?.apply {
                 fx = a[1].toFloatOrNull() ?: fx; fy = a[2].toFloatOrNull() ?: fy; fr = a[3].toFloatOrNull() ?: fr
+                if (a.size == 5) shown = a[4] == "1"
             }
         }
+        visCache = ctls.filter { it.shown }
         selected = null; computeFit()
     }
 
@@ -276,16 +280,54 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
     /** Freezes the computed sizes into the layout once the user starts customising it. */
     private fun bake() { if (autoFit) { val s = ctlBasis() / padH(); ctls.forEach { it.fr *= gK[it.group] * s }; autoFit = false } }   // keep exactly the size on screen
 
-    private fun saveLayout() { bake(); keepInside(); saveNow(); Cfg.profileName = "" }
+    private fun saveLayout() { bake(); keepInside(); saveNow() }
 
     /** The layout on screen, as the text a profile keeps. */
-    private fun layoutText(): String { bake(); keepInside(); return ctls.joinToString(";") { String.format(java.util.Locale.US, "%s:%.3f:%.3f:%.3f", it.id, it.fx, it.fy, it.fr) } }
+    private fun layoutText(): String { bake(); keepInside(); return ctls.joinToString(";") { String.format(java.util.Locale.US, "%s:%.3f:%.3f:%.3f", it.id, it.fx, it.fy, it.fr) + hiddenField(it) } }
 
-    /** Puts a profile on screen: its template, with the positions and sizes it holds. */
+    private var profileBase = ""   // the profile's layout as it was when it was put on screen, to tell whether you changed it
+
+    /** Puts a profile on screen: its template, with the positions and sizes it holds. Your own layout for that template is kept aside (MY OWN LAYOUT in the picker). */
     fun applyProfile(p: RemoteProfile) {
+        if (p.template !in TEMPLATES) return
         ctrlReset()
-        prefs.edit().putString(if (p.template == "ps") "layout" else "layout_${p.template}", p.layout).apply()
-        loadTemplate(p.template); Cfg.profileName = p.name; invalidate()
+        val key = if (p.template == "ps") "layout" else "layout_${p.template}"
+        if (Cfg.profileName.isEmpty()) prefs.getString(key, "")?.takeIf { it.isNotEmpty() }?.let { prefs.edit().putString("own_$key", it).apply() }
+        prefs.edit().putString(key, p.layout).apply()
+        loadTemplate(p.template); Cfg.profileName = p.name; Cfg.profileId = p.id; profileBase = layoutText(); invalidate()
+    }
+
+    private fun ownLayout() = (prefs.getString("own_${layoutKey()}", "") ?: "").isNotEmpty()
+
+    /** Puts back the layout this device had for this template before a profile replaced it. */
+    private fun restoreOwn() {
+        val key = layoutKey(); val own = prefs.getString("own_$key", "") ?: ""
+        if (own.isEmpty()) return
+        prefs.edit().putString(key, own).remove("own_$key").apply()
+        ctrlReset(); Cfg.profileName = ""; Cfg.profileId = 0; loadTemplate(tpl); invalidate()
+    }
+
+    /** Done editing while a profile is on screen: if the layout changed, offer to update the profile on the PC (every device then has the new layout). */
+    private fun offerProfileSave() {
+        if (Cfg.profileId <= 0) return
+        val now = layoutText()
+        if (now == profileBase) return
+        val a = context as? android.app.Activity ?: return
+        val name = Cfg.profileName; val id = Cfg.profileId; val template = tpl
+        fun toast(s: String) = android.widget.Toast.makeText(context, s, android.widget.Toast.LENGTH_LONG).show()
+        android.app.AlertDialog.Builder(a).setTitle("SAVE TO THE PROFILE?")
+            .setMessage("YOU CHANGED THE LAYOUT OF ${name.uppercase()}. UPDATE THE PROFILE ON THE PC (EVERY CONNECTED DEVICE GETS THE NEW LAYOUT), SAVE IT AS A NEW PROFILE, OR KEEP THE CHANGES ON THIS DEVICE ONLY.")
+            .setPositiveButton("UPDATE PROFILE") { _, _ ->
+                Core.profiles.put(name, template, now, id) { newId ->
+                    if (newId > 0) { Cfg.profileId = newId; profileBase = now; toast("PROFILE UPDATED ON THE PC") }
+                    else toast("COULDN'T UPDATE IT: IS THE PC CONNECTED? THE CHANGES STAY ON THIS DEVICE")
+                }
+            }
+            .setNeutralButton("SAVE AS NEW...") { _, _ ->
+                ProfilesUi.save(a, template, { now }, ProfileCache.list(), { }) { nid, n -> Cfg.profileName = n; Cfg.profileId = nid; profileBase = now; invalidate() }
+            }
+            .setNegativeButton("THIS DEVICE ONLY") { _, _ -> Cfg.profileName = ""; Cfg.profileId = 0; invalidate() }
+            .show()
     }
 
     /** A game linked to a profile started on the PC: go to the controller screen and use that profile. Nothing is locked: change the layout whenever you like. */
@@ -293,7 +335,30 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
         setMode(CONTROLLER)
         Core.profile(id) { p -> if (p != null) { applyProfile(p); android.widget.Toast.makeText(context, "${game.uppercase()}: PROFILE ${p.name.uppercase()}", android.widget.Toast.LENGTH_LONG).show() } }
     }
-    private fun saveNow() = prefs.edit().putString(layoutKey(), ctls.joinToString(";") { "${it.id}:${it.fx}:${it.fy}:${it.fr}" }).apply()
+    private fun saveNow() = prefs.edit().putString(layoutKey(), ctls.joinToString(";") { "${it.id}:${it.fx}:${it.fy}:${it.fr}" + hiddenField(it) }).apply()
+
+    /** ":0" or ":1" when you hid or showed a control against the template's default, nothing otherwise. */
+    private fun hiddenField(k: Ctl) = if (k.shown != k.visible) (if (k.shown) ":1" else ":0") else ""
+
+    private fun ctlName(k: Ctl) = when (k.id) {
+        "sl" -> "LEFT STICK"; "sr" -> "RIGHT STICK"; "up" -> "D-PAD UP"; "dn" -> "D-PAD DOWN"; "lf" -> "D-PAD LEFT"; "rt" -> "D-PAD RIGHT"; "tp" -> "TOUCHPAD"
+        else -> k.label.ifEmpty { k.id }.uppercase()
+    }
+
+    /** The menu where each button is switched on or off. A hidden button isn't drawn, can't be touched and sends nothing. */
+    private fun buttonsMenu() {
+        val a = context as? android.app.Activity ?: return
+        bake()
+        val on = BooleanArray(ctls.size) { ctls[it].shown }
+        fun apply() { visCache = ctls.filter { it.shown }; if (selected?.shown == false) selected = null; saveLayout(); invalidate() }
+        val dlg = android.app.AlertDialog.Builder(a).setTitle("SHOW OR HIDE BUTTONS")
+            .setMultiChoiceItems(ctls.map { ctlName(it) }.toTypedArray(), on) { _, i, checked -> ctls[i].shown = checked; apply() }
+            .setNeutralButton("SHOW ALL", null).setPositiveButton("DONE", null).create()
+        dlg.show()
+        dlg.getButton(android.app.AlertDialog.BUTTON_NEUTRAL).setOnClickListener {   // stays open, so the ticks can be updated
+            ctls.forEachIndexed { i, k -> k.shown = true; on[i] = true; dlg.listView.setItemChecked(i, true) }; apply()
+        }
+    }
 
     // ---------- lifecycle ----------
     private var stats = tx.stats()
@@ -1311,29 +1376,32 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
             val bx = width / 2f - 138 * dp
             button(c, RectF(bx, y0, bx + 88 * dp, y0 + 32 * dp), LILAC, "EDIT", 12f, "edit") { editing = true; selected = null }
             button(c, RectF(bx + 94 * dp, y0, bx + 182 * dp, y0 + 32 * dp), PINK, tplLabel(tpl), 12f, "gamepad") {
-                ctrlReset(); Cfg.profileName = ""; loadTemplate(TEMPLATES[(TEMPLATES.indexOf(tpl) + 1) % TEMPLATES.size])
+                ctrlReset(); Cfg.profileName = ""; Cfg.profileId = 0; loadTemplate(TEMPLATES[(TEMPLATES.indexOf(tpl) + 1) % TEMPLATES.size])
             }
             button(c, RectF(bx + 188 * dp, y0, bx + 276 * dp, y0 + 32 * dp), GREEN, "PROFILES", 12f, "keys") {
-                (context as? android.app.Activity)?.let { ProfilesUi.picker(it, tpl, { layoutText() }) { p -> applyProfile(p) } }
+                (context as? android.app.Activity)?.let {
+                    ProfilesUi.picker(it, tpl, { layoutText() }, { p -> applyProfile(p) }, { id, name -> Cfg.profileName = name; Cfg.profileId = id; profileBase = layoutText(); invalidate() }, ownLayout(), { restoreOwn() })
+                }
             }
             if (Cfg.profileName.isNotEmpty())   // which profile is on screen
                 pill(c, RectF(width / 2f - 110 * dp, barH + 8 * dp, width / 2f + 110 * dp, barH + 34 * dp), LILAC, "PROFILE: ${Cfg.profileName}", INK, 10.5f, "gamepad")
             return
         }
-        text(c, if (selected == null) "TOUCH A CONTROL, THEN DRAG IT" else "DRAG TO MOVE · USE − AND + TO RESIZE", width / 2f, barH + 26 * dp, 11f, Paint.Align.CENTER, INK, width - 24 * dp)
+        text(c, if (selected == null) "TOUCH A CONTROL, THEN DRAG IT · BUTTONS = SHOW OR HIDE" else "DRAG TO MOVE · USE − AND + TO RESIZE", width / 2f, barH + 26 * dp, 11f, Paint.Align.CENTER, INK, width - 24 * dp)
         val w = 100 * dp; val y = height - 42 * dp
         val armed = SystemClock.uptimeMillis() < resetArmedUntil
         val acts = listOf(
             Triple(if (armed) "SURE?" else "", "retry") {
                 val n = SystemClock.uptimeMillis()
-                if (n < resetArmedUntil) { resetArmedUntil = 0; prefs.edit().remove(layoutKey()).apply(); loadTemplate(tpl) }
+                if (n < resetArmedUntil) { resetArmedUntil = 0; prefs.edit().remove(layoutKey()).apply(); Cfg.profileName = ""; Cfg.profileId = 0; loadTemplate(tpl) }
                 else { resetArmedUntil = n + 2500; postInvalidateDelayed(2600) }
             },
             Triple("", "minus") { bake(); selected?.let { it.fr = (it.fr * .9f).coerceAtLeast(.03f) }; saveLayout() },
             Triple("", "plus") { bake(); selected?.let { it.fr = (it.fr * 1.1f).coerceAtMost(.35f) }; saveLayout() },
-            Triple("", "check") { editing = false; selected = null; saveLayout() })
-        val colors = listOf(if (armed) HOT else PINK, BABY, BABY, GREEN)
-        val x0 = width / 2f - (w * 4 + 18 * dp) / 2
+            Triple("BUTTONS", "keys") { buttonsMenu() },
+            Triple("", "check") { editing = false; selected = null; saveLayout(); offerProfileSave() })
+        val colors = listOf(if (armed) HOT else PINK, BABY, BABY, LILAC, GREEN)
+        val x0 = width / 2f - (w * 5 + 24 * dp) / 2
         acts.forEachIndexed { i, (l, ic, f) -> button(c, RectF(x0 + i * (w + 6 * dp), y, x0 + i * (w + 6 * dp) + w, y + 32 * dp), colors[i], l, 11f, ic, f) }
     }
 }

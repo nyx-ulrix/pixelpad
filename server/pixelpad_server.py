@@ -410,7 +410,9 @@ class Device:
     def send(self, b):
         """Sends a packet back to this tablet (replies can come from more than one thread)."""
         with self.rlock:
-            if self.reply: self.reply(self.sealer(b) if self.sealer else b)
+            try:
+                if self.reply: self.reply(self.sealer(b) if self.sealer else b)
+            except OSError: pass   # a dead connection or no network: it must not stop the others being told
 
 class Playout:
     """Replays pen packets with the spacing the tablet measured (the last byte), after a small fixed delay. Wi-Fi delivers packets
@@ -450,6 +452,7 @@ class Server:
         self.last_error, self.bind_errors, self.udp_ok, self.tcp_ok = "", [], False, False
         self.port, self.tsock, self.usock = None, None, None
         self.recorder, self.allow_record = KeyRecorder(), False   # off until switched on in the Desk: it listens to this keyboard
+        self.switch_mid = 0   # every "a game started" notice has its own message id, so a lost chunk can't be mixed into the next one
         self.announce = True   # tell devices which profile a linked game likes when it starts (the Desk can switch this off)
         self.profiles, self.watch, self.steam_cache = pp.Profiles(), None, (0.0, {})   # the profile library and the game watcher (started by run)
         self.pair, self.allow_legacy, self._warned = None, True, 0.0   # pair: set by the Desk. Without it (or with allow_legacy) plain 16-byte packets are accepted as before
@@ -490,8 +493,10 @@ class Server:
     def switch_profile(self, pid, game, only=None):
         """Tell devices that a linked game started and which profile it likes. They may follow it or not: nothing is locked."""
         if not self.announce: return
+        self.switch_mid = self.switch_mid % 255 + 1
+        text = f"{pid}\n{game}\n{self.watch.seq if self.watch else 0}"   # the last line says which start of the game this is, so a device that already followed it can ignore a repeat
         for dev in ([only] if only else list(self.devices.values())):
-            for c in pp.chunks(pp.R_SWITCH, 0, f"{pid}\n{game}"): dev.send(c)
+            for c in pp.chunks(pp.R_SWITCH, self.switch_mid, text): dev.send(c)
 
     def profile_msg(self, dev, d):
         """Packet mode 10: list, get, save and delete profiles. See pixelpad_profiles.py for the format."""
@@ -499,7 +504,11 @@ class Server:
         text = dev.prof_rx.add(d)
         if text is None: return
         if op == pp.LIST:
-            out = "\n".join(f"{i}\t{n}" for i, n in self.profiles.list()[:pp.MAX_LIST]); kind = pp.R_LIST
+            out = ""   # as many as fit in the 255 chunks a reply may have (all 64 with ordinary names)
+            for i, n in self.profiles.list():
+                if len((out + "\n" + f"{i}\t{n}").encode("utf-8")) > 2700: break
+                out += ("\n" if out else "") + f"{i}\t{n}"
+            kind = pp.R_LIST
         elif op == pp.GET:
             p = self.profiles.get(int(text) if text.isascii() and text.isdigit() and len(text) < 6 else 0)
             out = f"{p['id']}\n{p['name']}\n{p['template']}\n{p['layout']}" if p else ""; kind = pp.R_PROFILE
@@ -542,7 +551,7 @@ class Server:
             if len(self.devices) == 1: _timer(True)
             log(f"player {d.slot} connected ({transport})")
             if self.watch and self.watch.current:   # a linked game is already running: tell the new device too (it may ignore it)
-                threading.Timer(1.5, lambda d=d, cur=self.watch.current: d.key in self.devices and self.switch_profile(cur[0], cur[1], d)).start()
+                threading.Timer(1.5, lambda d=d, cur=self.watch.current: self.devices.get(d.key) is d and self.switch_profile(cur[0], cur[1], d)).start()
             return d
 
     def drop(self, key):
@@ -602,7 +611,9 @@ class Server:
         if mode == PING:
             dev.rtt_us = struct.unpack(PEN_FMT, d)[4]
             if 1 <= d[13] <= 16: dev.colour = d[13] - 1   # the phone's own colour rides in every ping (its tilt-x byte); we only record it
-            dev.send(self._pong(d, dev.slot)); return
+            dev.send(self._pong(d, dev.slot))
+            if dev.pad and dev.pad.last_rumble != (0, 0): dev.send(struct.pack(PEN_FMT, RUMBLE, *dev.pad.last_rumble, 0, 0, 0, 0, 0, 0))   # the phone's buzz lasts 1.5 s: renew it while the game still rumbles
+            return
         if mode == HELLO:
             x, y = struct.unpack(PEN_FMT, d)[3:5]
             if x > 0 and y > 0: dev.phone = (x, y)

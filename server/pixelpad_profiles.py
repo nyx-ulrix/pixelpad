@@ -1,7 +1,7 @@
 """Controller profiles kept on the PC, links from Steam games (or any program) to a profile, and the watcher that notices a linked game starting.
 
 A profile is a controller layout: a name, the template it starts from (ps, xbox, switch, joycon, fight) and where each control sits and how big it is
-("id:x:y:size;..."), exactly as the app stores a layout. Every connected device can list, load, save and delete them (packet mode 10, see the table below), so
+("id:x:y:size;..."), exactly as the app stores a layout. A fifth field, 0 or 1, says a control is hidden or shown against the template's default. Every connected device can list, load, save and delete them (packet mode 10, see the table below), so
 a layout made on one device is there on all of them. Nothing here locks a device to a profile: a link only tells devices which profile a game likes, once,
 when that game starts, and the device may follow it or not.
 
@@ -61,11 +61,11 @@ def clean_layout(text):
     for part in text.split(";"):
         if not part: continue
         a = part.split(":")
-        if len(a) != 4 or not re.fullmatch(r"[a-z0-9]{1,6}", a[0]): return None
+        if len(a) not in (4, 5) or not re.fullmatch(r"[a-z0-9]{1,6}", a[0]) or (len(a) == 5 and a[4] not in ("0", "1")): return None
         try: x, y, r = float(a[1]), float(a[2]), float(a[3])
         except ValueError: return None
         if not (-0.2 <= x <= 1.2 and -0.2 <= y <= 1.2 and 0.01 <= r <= 0.45): return None
-        out.append(f"{a[0]}:{x:.3f}:{y:.3f}:{r:.3f}")
+        out.append(f"{a[0]}:{x:.3f}:{y:.3f}:{r:.3f}" + (f":{a[4]}" if len(a) == 5 else ""))
         if len(out) > 40: return None
     return ";".join(out) if out else None
 
@@ -73,7 +73,7 @@ def clean_layout(text):
 class Profiles:
     """The profile library and the game links, as small JSON files in one folder (nothing outside it is ever touched)."""
     def __init__(self, folder=BASE):
-        self.folder, self.lock = folder, threading.Lock()
+        self.folder, self.lock, self._lc = folder, threading.RLock(), (None, [])   # _lc: the last list and the folder's change time it was made at
 
     def _path(self, pid): return os.path.join(self.folder, f"{int(pid)}.json")
 
@@ -84,9 +84,10 @@ class Profiles:
         os.replace(tmp, path)
 
     def _read(self, path):
-        try:
-            with open(path, encoding="utf-8") as f: return json.load(f)
-        except (OSError, ValueError): return None
+        with self.lock:   # not while a writer is swapping the file in (Windows refuses that while the file is open)
+            try:
+                with open(path, encoding="utf-8") as f: return json.load(f)
+            except (OSError, ValueError): return None
 
     def ids(self):
         try: names = os.listdir(self.folder)
@@ -101,9 +102,12 @@ class Profiles:
         return {"id": pid, "name": clean_name(p.get("name", "")), "template": p["template"], "layout": lay} if lay else None
 
     def list(self):
-        """[(id, name)] sorted by name."""
-        out = [(p["id"], p["name"]) for p in (self.get(i) for i in self.ids()) if p]
-        return sorted(out, key=lambda t: (t[1].lower(), t[0]))
+        """[(id, name)] sorted by name. Read again only when the folder has changed."""
+        try: stamp = os.stat(self.folder).st_mtime_ns
+        except OSError: return []
+        if stamp == self._lc[0]: return list(self._lc[1])
+        out = sorted(((p["id"], p["name"]) for p in (self.get(i) for i in self.ids()) if p), key=lambda t: (t[1].lower(), t[0]))
+        self._lc = (stamp, out); return list(out)
 
     def put(self, name, template, layout, pid=0):
         """Saves a profile (a new one if pid is 0 or unknown) and returns its number, or 0 if it was refused."""
@@ -161,14 +165,15 @@ def parse_vdf(text):
     """Steam's text format ("key" "value" and "key" { ... }) as nested dicts."""
     toks = [(a.replace("\\\\", "\\").replace('\\"', '"'), b) for a, b in re.findall(r'"((?:[^"\\]|\\.)*)"|([{}])', text)]
     pos = 0
-    def block():
+    def block(depth=0):
         nonlocal pos
         d = {}
+        if depth > 40: return d   # nothing real nests this deep
         while pos < len(toks):
             s, brace = toks[pos]; pos += 1
             if brace == "}": return d
             if brace == "{": continue
-            if pos < len(toks) and toks[pos][1] == "{": pos += 1; d[s] = block()
+            if pos < len(toks) and toks[pos][1] == "{": pos += 1; d[s] = block(depth + 1)
             elif pos < len(toks): d[s] = toks[pos][0]; pos += 1
         return d
     return block()
@@ -212,7 +217,13 @@ def steam_running():
     """The app id of the Steam game that is running now (Steam keeps it in the registry), or 0."""
     try:
         import winreg
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam") as k: return int(winreg.QueryValueEx(k, "RunningAppID")[0])
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam") as k: app = int(winreg.QueryValueEx(k, "RunningAppID")[0])
+        if app:   # Steam leaves RunningAppID behind if it is closed while a game runs: its own "Running" flag for the game says whether it really is
+            try:
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, rf"Software\Valve\Steam\Apps\{app}") as a:
+                    if int(winreg.QueryValueEx(a, "Running")[0]) != 1: return 0
+            except (OSError, ValueError): pass
+        return app
     except (OSError, ValueError): return 0
 
 
@@ -242,7 +253,7 @@ class Watcher:
     def __init__(self, profiles, on_switch, names=lambda appid: "", running=None, exes=running_exes):
         self.profiles, self.on_switch, self.names = profiles, on_switch, names
         self.running, self.exes = running or steam_running, exes
-        self.key, self.current = None, None   # what is running now that is linked; (profile id, game name) of it
+        self.key, self.current, self.seq = None, None, 0   # what is running now that is linked; (profile id, game name) of it; a number for this start of it
 
     def poll(self):
         links = self.profiles.links()
@@ -256,7 +267,7 @@ class Watcher:
         if key == self.key: return
         self.key = key
         self.current = (pid, game) if key else None
-        if key: self.on_switch(pid, game)
+        if key: self.seq = int(time.time()); self.on_switch(pid, game)
 
     def start(self, every=2.0):
         def loop():

@@ -75,7 +75,7 @@ class MainActivity : Activity() {
     }
 
     override fun onResume() {
-        super.onResume(); Core.applyConnection()
+        super.onResume(); Haptics.visible = true; Core.applyConnection()
         @Suppress("DEPRECATION") run { pinned = (getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager).lockTaskModeState != android.app.ActivityManager.LOCK_TASK_MODE_NONE }   // the update screen can unpin
         view.reload()
         if (!scanChecked) { // on launch: if no PC answers, show the QR scanner (once per launch)
@@ -117,8 +117,9 @@ class MainActivity : Activity() {
 
     override fun onPause() {
         if (scanPending) { handler.removeCallbacks(scanRun); scanPending = false; scanChecked = false }   // left before it showed: try again next time we're back
-        Haptics.stop(); view.pause(); super.onPause()
+        Haptics.visible = false; Haptics.stop(); view.pause(); super.onPause()
     }
+    override fun onDestroy() { Core.sender.rumbleListener = null; Core.profiles.onSwitch = null; super.onDestroy() }   // they hold this activity otherwise
     override fun onStart() { super.onStart(); Core.visible(1) }
     override fun onStop() { Core.visible(-1); super.onStop() }
 

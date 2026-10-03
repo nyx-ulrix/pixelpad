@@ -187,6 +187,7 @@ object Cfg {
     var ringOn by P("ringOn", true); var ringSize by P("ringSize", 90); var ringStyle by P("ringStyle", 0)
     var ringColor by P("ringColor", 0); var ringThick by P("ringThick", 3); var ringTouched by P("ringTouched", false)
     var tpl by P("tpl", "ps")                // controller template
+    var profileId by P("profileId", 0)       // the number of that profile on the PC (0 when none)
     var profileName by P("profileName", "")   // the profile on the controller screen now ("" if it was changed afterwards or isn't one)
     var autoProfile by P("autoProfile", true) // switch to a game's profile when the PC says that game started (it never locks you to it)
     var rumble by P("rumble", true)          // vibrate this device when a game on the PC rumbles the controller
@@ -348,7 +349,7 @@ object Core {
     /** The profile library on the PC. Created on first use; it also listens for the PC's "a linked game started" notice. */
     val profiles by lazy { ProfileSync({ sender.raw(it) }, { ms, f -> main.postDelayed(f, ms) }, { f -> main.post(f) }).also { p -> sender.profileListener = { p.onPacket(it) } } }
     /** A profile: from the PC if it answers, otherwise the copy kept from last time. */
-    fun profile(id: Int, done: (RemoteProfile?) -> Unit) = profiles.get(id) { p -> if (p != null) ProfileCache.save(p); done(p ?: ProfileCache.profile(id)) }
+    fun profile(id: Int, done: (RemoteProfile?) -> Unit) = profiles.getFull(id) { p, answered -> if (p != null) ProfileCache.save(p); done(p ?: if (answered) null else ProfileCache.profile(id)) }   // the old copy only if the PC didn't answer
     private var onScreen = 0
 
     /** Activities call this from onStart (+1) and onStop (-1). With nothing on screen the sender stops pinging and closes its sockets. */

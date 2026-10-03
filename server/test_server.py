@@ -300,6 +300,8 @@ assert pp.clean_layout(LAY) == "tri:0.840:0.240:0.110;x:0.840:0.520:0.110;sl:0.1
 for bad in ("", "tri:0.84:0.24", "TRI:1:1:.1", "a:2:1:.1", "a:.5:.5:.9", "a:.5:.5:x", "../x:.5:.5:.1", ";".join(f"a{i}:.5:.5:.1" for i in range(41)), "a" * 1100):
     assert pp.clean_layout(bad) is None, bad
 assert pp.clean_layout("a:1.0E-1:.5:.1") == "a:0.100:0.500:0.100"           # Kotlin writes small floats like this
+assert pp.clean_layout("a:.5:.5:.1:0;b:.5:.5:.1:1;c:.5:.5:.1") == "a:0.500:0.500:0.100:0;b:0.500:0.500:0.100:1;c:0.500:0.500:0.100", "hidden / shown fifth field"
+assert pp.clean_layout("a:.5:.5:.1:2") is None and pp.clean_layout("a:.5:.5:.1:x") is None and pp.clean_layout("a:.5:.5:.1:0:0") is None
 _dir = _tf3.mkdtemp(); P = pp.Profiles(_dir)
 a = P.put("  FPS\x00 shooter that has a very long name ", "ps", LAY); b = P.put("Racing", "xbox", LAY)
 assert (a, b) == (1, 2) and [n for _, n in P.list()] == ["FPS shooter that has", "Racing"], P.list()
@@ -354,8 +356,25 @@ assert talk(pp.LIST, 4, "") == {pp.R_LIST: "1\tMy profile"}
 g = talk(pp.GET, 5, "1")[pp.R_PROFILE].split("\n"); assert g[:3] == ["1", "My profile", "ps"] and g[3] == pp.clean_layout(LAY), g
 assert talk(pp.GET, 6, "55")[pp.R_PROFILE] == "" and talk(pp.GET, 7, "x; DROP")[pp.R_PROFILE] == ""
 assert talk(pp.DELETE, 8, "1")[pp.R_DELETED] == "1" and srv.profiles.ids() == [] and talk(pp.DELETE, 9, "1")[pp.R_DELETED] == "0"
-del replies[:]; srv.switch_profile(3, "Portal 2", srv.devices["prof"]); rx = pp.Reassembler(); _t = [rx.add(r) for r in replies][-1]; assert _t == "3\nPortal 2", _t
+del replies[:]; srv.switch_profile(3, "Portal 2", srv.devices["prof"]); rx = pp.Reassembler(); _t = [rx.add(r) for r in replies][-1]; assert _t == "3\nPortal 2\n0", _t
 for k in list(srv.devices): srv.drop(k)
+
+# reviewer fixes: every profile fits in the list reply, switch notices carry a start number and their own message id, a dead connection doesn't stop the others, rumble is renewed
+for i in range(1, 65): srv.profiles.put(("Profile number %d long name" % i)[:20], "ps", LAY)
+rx_ = talk(pp.LIST, 20, "")[pp.R_LIST].split("\n"); assert len(rx_) == 64, len(rx_)
+for p_ in srv.profiles.ids(): srv.profiles.delete(p_)
+srv.watch = pp.Watcher(srv.profiles, lambda *a_: None); srv.watch.seq = 1234
+send(pkt(3), "prof2"); del replies[:]; srv.switch_profile(5, "Hades II", srv.devices["prof2"]); m1 = replies[0][2]
+_t = pp.Reassembler(); assert [x for x in (_t.add(r) for r in replies) if x] == ["5\nHades II\n1234"]
+del replies[:]; srv.switch_profile(5, "Hades II", srv.devices["prof2"]); assert replies[0][2] != m1, "each notice has its own message id"
+srv.watch = None
+srv.devices["prof2"].reply = lambda b: (_ for _ in ()).throw(OSError("gone")); srv.devices["prof2"].send(bytes(16))   # must not raise
+class _FakePad: last_rumble = (7, 9)
+srv.devices["prof2"].pad = _FakePad(); got_ = []; srv.devices["prof2"].reply = got_.append; srv.devices["prof2"].sealer = None
+srv.handle(pkt(3), got_.append, "prof2", "wifi"); assert any(r[0] == 11 and r[1] == 7 and r[2] == 9 for r in got_), "rumble renewed on every ping"
+srv.devices["prof2"].pad = None
+for k in list(srv.devices): srv.drop(k)
+assert pp.parse_vdf('"a" {' * 100 + "}" * 100) is not None, "deep nesting is cut off, not a crash"
 
 # rumble from a game reaches the device as a mode-11 packet (the real virtual pad is tested by hand with SDL)
 got_rumble = []

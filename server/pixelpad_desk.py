@@ -1,5 +1,5 @@
 """PixelPad Desk: window app for the PC side of PixelPad (retro pixel style)."""
-VERSION = "1.4.0"   # keep in step with versionName in android/app/build.gradle.kts (test_server.py checks), and with the release tag
+VERSION = "1.4.1"   # keep in step with versionName in android/app/build.gradle.kts (test_server.py checks), and with the release tag
 import ctypes, functools, json, math, os, re, secrets, socket, subprocess, sys, threading, time, tkinter as tk
 from urllib.parse import quote
 from tkinter import scrolledtext
