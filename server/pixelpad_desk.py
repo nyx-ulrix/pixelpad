@@ -1,10 +1,11 @@
 """PixelPad Desk: window app for the PC side of PixelPad (retro pixel style)."""
-VERSION = "1.3.0"   # keep in step with versionName in android/app/build.gradle.kts (test_server.py checks), and with the release tag
+VERSION = "1.4.0"   # keep in step with versionName in android/app/build.gradle.kts (test_server.py checks), and with the release tag
 import ctypes, functools, json, math, os, re, secrets, socket, subprocess, sys, threading, time, tkinter as tk
 from urllib.parse import quote
 from tkinter import scrolledtext
 import segno
 import pixelpad_server as ns
+import pixelpad_profiles as pp
 import pixel_icons as pi
 
 
@@ -75,7 +76,7 @@ def save():
         os.makedirs(os.path.dirname(CFG), exist_ok=True)
         with open(CFG, "w") as f:
             json.dump({"open": {k: w["visible"] for k, w in reg.items()}, "speed": srv.speed, "area_mode": srv.area_mode,
-                       "custom": list(srv.custom), "screen": screen_idx[0], "highlight": hl["on"], "hl_size": hl["size"], "hl_style": hl["style"], "hl_color": hl["color"], "hl_thick": hl["thick"], **_key_fields(), "allow_legacy": srv.allow_legacy, "legacy_until": legacy_until[0], "theme": theme[0] if theme[0] is not None else -1, "pc_name": pc_name.get().strip()[:20] or "MY PC"}, f)
+                       "custom": list(srv.custom), "screen": screen_idx[0], "highlight": hl["on"], "hl_size": hl["size"], "hl_style": hl["style"], "hl_color": hl["color"], "hl_thick": hl["thick"], **_key_fields(), "allow_legacy": srv.allow_legacy, "announce_switch": srv.announce, "legacy_until": legacy_until[0], "theme": theme[0] if theme[0] is not None else -1, "pc_name": pc_name.get().strip()[:20] or "MY PC"}, f)
     except OSError: pass
 
 def tip(w, text):
@@ -651,9 +652,79 @@ def log(*a):
     root.after(0, put)
 ns.log = log
 
+# ---------- window: games and profiles ----------
+gm = window("games", "GAMES AND PROFILES", LILAC, "gamepad")
+if not (isinstance(cfg.get("open"), dict) and "games" in cfg["open"]): reg["games"]["visible"] = False   # closed until you ask for it
+srv.announce = cfg.get("announce_switch") is not False
+gm_games, gm_sig = [None, []], [None]   # the Steam games (read in the background) and what the list was last built from
+
+def gm_read_games():
+    gm_games[1] = pp.steam_games(); gm_games[0] = pp.steam_root()
+
+gm_head = tk.Frame(gm, bg=PAPER); gm_head.pack(fill="x")
+gm_status = label(gm_head, text=" ", font=FS); gm_status.pack(side="left", fill="x", expand=True)
+def gm_announce():
+    srv.announce = not srv.announce; flag(gm_ann, "gamepad", srv.announce); save()
+gm_ann = pill(gm_head, "TELL DEVICES WHEN A LINKED GAME STARTS", gm_announce, PAPER, "gamepad"); flag(gm_ann, "gamepad", srv.announce); gm_ann.pack(side="right")
+hint(gm, "PICK A PROFILE FOR EACH GAME. WHEN IT STARTS, EVERY CONNECTED DEVICE IS TOLD AND SWITCHES TO THAT LAYOUT. NOTHING IS LOCKED: A DEVICE CAN PICK ANOTHER LAYOUT AFTERWARDS, AND NOTHING CHANGES WHEN THE GAME ENDS. PROFILES ARE SAVED ON THE DEVICES (CONTROLLER SCREEN > PROFILES) AND KEPT HERE, SO ANY CONNECTED DEVICE CAN USE THEM.", wrap=520).pack(fill="x", pady=(2, 4))
+gm_wrap = tk.Frame(gm, bg=PAPER); gm_wrap.pack(fill="both", expand=True)
+gm_cv = tk.Canvas(gm_wrap, bg=PAPER, highlightthickness=0); gm_bar = tk.Scrollbar(gm_wrap, command=gm_cv.yview)
+gm_cv.configure(yscrollcommand=gm_bar.set); gm_bar.pack(side="right", fill="y"); gm_cv.pack(side="left", fill="both", expand=True)
+gm_in = tk.Frame(gm_cv, bg=PAPER); gm_win = gm_cv.create_window(0, 0, window=gm_in, anchor="nw")
+gm_in.bind("<Configure>", lambda e: gm_cv.configure(scrollregion=gm_cv.bbox("all")))
+gm_cv.bind("<Configure>", lambda e: gm_cv.itemconfigure(gm_win, width=e.width))
+gm_cv.bind("<Enter>", lambda e: gm_cv.bind_all("<MouseWheel>", lambda ev: gm_cv.yview_scroll(-1 if ev.delta > 0 else 1, "units")))
+gm_cv.bind("<Leave>", lambda e: gm_cv.unbind_all("<MouseWheel>"))
+
+def gm_build(force=False):
+    """The lists of profiles, Steam games and programs; rebuilt only when something in them changed."""
+    profs, links = srv.profiles.list(), srv.profiles.links()
+    sig = (tuple(profs), repr(links), tuple(gm_games[1]), gm_games[0])
+    if sig == gm_sig[0] and not force: return
+    gm_sig[0] = sig
+    for c in gm_in.winfo_children(): c.destroy()
+    ids = [0] + [i for i, _ in profs]
+    names = ["NO PROFILE"] + [n if sum(1 for _, m in profs if m == n) == 1 else f"{n} #{i}" for i, n in profs]
+    def head(text): label(gm_in, text=text).pack(fill="x", pady=(8, 2))
+    def chooser(parent, pid, kind, key):
+        var = tk.StringVar(value=names[ids.index(pid)] if pid in ids else names[0])
+        m = tk.OptionMenu(parent, var, *names, command=lambda v: (srv.profiles.link(kind, key, ids[names.index(v)]), gm_sig.__setitem__(0, None)))
+        m.config(bg=PAPER, fg=INK, font=FS, highlightbackground=INK, relief="solid", width=18, anchor="w"); return m
+    head("PROFILES ON THIS PC")
+    if not profs: hint(gm_in, "NONE YET: ON A DEVICE OPEN THE CONTROLLER SCREEN, ARRANGE THE BUTTONS, THEN PROFILES > SAVE THIS LAYOUT.", wrap=480).pack(fill="x")
+    for pid, name in profs:
+        row = tk.Frame(gm_in, bg=PAPER); row.pack(fill="x", pady=1)
+        l = label(row, text=" " + name, font=FS); pic(l, "gamepad"); l.pack(side="left")
+        def drop(pid=pid, name=name):
+            from tkinter import messagebox
+            if messagebox.askyesno("PixelPad Desk", f"Delete the profile {name}? Games linked to it go back to no profile."): srv.profiles.delete(pid); gm_build(True)
+        pill(row, "", drop, PINK, "trash", "Delete this profile").pack(side="right")
+    head("STEAM GAMES")
+    if gm_games[0] is None: hint(gm_in, "STEAM WASN'T FOUND ON THIS PC.", wrap=480).pack(fill="x")
+    elif not gm_games[1]: hint(gm_in, "NO INSTALLED STEAM GAMES FOUND.", wrap=480).pack(fill="x")
+    for appid, name in gm_games[1]:
+        row = tk.Frame(gm_in, bg=PAPER); row.pack(fill="x", pady=1)
+        label(row, text=" " + name[:34], font=FS).pack(side="left")
+        chooser(row, links["steam"].get(str(appid), 0), "steam", appid).pack(side="right")
+    head("OTHER PROGRAMS")
+    for exe, pid in links["exe"].items():
+        row = tk.Frame(gm_in, bg=PAPER); row.pack(fill="x", pady=1)
+        label(row, text=" " + exe[:34], font=FS).pack(side="left")
+        pill(row, "", lambda e=exe: (srv.profiles.link("exe", e, 0), gm_build(True)), PINK, "x", "Stop watching this program").pack(side="right", padx=(4, 0))
+        chooser(row, pid, "exe", exe).pack(side="right")
+    def add_program():
+        from tkinter import filedialog
+        p = filedialog.askopenfilename(title="Pick a program", filetypes=[("Programs", "*.exe")])
+        if p and profs: srv.profiles.link("exe", os.path.basename(p), ids[1]); gm_build(True)   # linked to your first profile; change it in the list
+    pill(gm_in, "ADD A PROGRAM", add_program, BABY, "plus").pack(anchor="w", pady=4)
+    pill(gm_in, "REFRESH THE LISTS", lambda: (threading.Thread(target=lambda: (gm_read_games(), root.after(0, gm_build, True)), daemon=True).start()), BABY, "retry").pack(anchor="w", pady=(0, 6))
+
+threading.Thread(target=lambda: (gm_read_games(), root.after(0, gm_build, True)), daemon=True).start()
+gm_build(True)
+
 # ---------- toolbar buttons ----------
 bar_pills = {}
-for key, ic, txt in (("connect", "qr", "CONNECT"), ("status", "pulse", "STATUS"), ("checklist", "check", "CHECKLIST"), ("area", "crop", "DEVICE AREA")):
+for key, ic, txt in (("connect", "qr", "CONNECT"), ("status", "pulse", "STATUS"), ("checklist", "check", "CHECKLIST"), ("area", "crop", "DEVICE AREA"), ("games", "gamepad", "GAMES")):
     bar_pills[key] = pill(bar, txt, lambda k=key: set_visible(k, not reg[k]["visible"]), reg[key]["color"], ic)
     bar_pills[key].pack(side="left", padx=int(4 * SC), pady=int(3 * SC))
 
@@ -691,6 +762,11 @@ def _tick():
         rate = (x.count - last.get(i, (0, now))[0]) / max(now - last.get(i, (0, now - 1))[1], 1e-3); last[i] = (x.count, now)
         pic(p, ("swatch:" + (THEMES[x.colour % len(THEMES)][3] if x.colour is not None else NO_COLOUR), x.transport, {0: "touchpad", 1: "pen", 2: "gamepad"}.get(x.mode, "dot")))   # their colour first
         p.config(text=f"P{i}  RTT {x.rtt_us / 1000 if x.rtt_us and x.rtt_us > 0 else 0:4.1f}MS {rate:4.0f}/S")
+    if reg["games"]["visible"] and page == "dash":
+        cur = srv.watch.current if srv.watch else None
+        prof = dict(srv.profiles.list()).get(cur[0], "") if cur else ""
+        gm_status.config(text=f" RUNNING NOW: {cur[1].upper()} -> {prof.upper()}" if cur and prof else " NO LINKED GAME IS RUNNING")
+        if tick_n[0] % 6 == 0: gm_build()
     ph = current_phone(); ax, ay, aw, ah = srv.area(ph)
     inuse.config(text=(f"DEVICE {ph[0]}x{ph[1]}  ->  {aw}x{ah} AT {ax},{ay}" if ph else f"AREA {aw}x{ah} AT {ax},{ay} (WAITING FOR A CONTROLLER DEVICE)"))
     sig = (srv.area(ph), srv.monitor, srv.area_mode)
@@ -864,7 +940,7 @@ if getattr(sys, "frozen", False): threading.Thread(target=clean_old, daemon=True
 
 root.protocol("WM_DELETE_WINDOW", hide_window)
 if _lock: threading.Thread(target=wake_listener, daemon=True).start()
-order[:] = ["connect", "status", "checklist", "area", "settings"]   # a new user needs the QR code first
+order[:] = ["connect", "status", "checklist", "area", "games", "settings"]   # a new user needs the QR code first
 root.update_idletasks(); layout(); refresh_bar(); draw_map(); tick(); hl_apply(); hl_tick()
 if "--tray" in sys.argv and tray: ui_visible[0] = False; root.withdraw()
 save()   # the pairing key is made on the first run: keep it

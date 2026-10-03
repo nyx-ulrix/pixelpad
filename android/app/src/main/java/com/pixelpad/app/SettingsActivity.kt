@@ -546,7 +546,13 @@ class SettingsActivity : Activity() {
         content.addView(card("TEMPLATE", GREEN,
             chooser("LAYOUT", listOf("PLAYSTATION" to "ps", "XBOX" to "xbox", "SWITCH (FULL)" to "switch", "SWITCH (HALF: ONE JOY-CON)" to "joycon", "FIGHTING PAD" to "fight"), { Cfg.tpl }, { Cfg.tpl = it }),
             toggle("FIGHTING PAD: JOYSTICK (OFF = ARROW BUTTONS)", { Cfg.fightStick }, { Cfg.fightStick = it }),
-            note("ALL TEMPLATES ACT AS A PLAYSTATION (DUALSHOCK 4) CONTROLLER ON THE PC, SO STEAM KEEPS ITS NATIVE SETTINGS. THE XBOX TEMPLATE JUST USES XBOX NAMES AND POSITIONS.")))
+            note("ALL TEMPLATES ACT AS A PLAYSTATION 4 (DUALSHOCK 4) CONTROLLER ON THE PC, SO STEAM KEEPS ITS NATIVE SETTINGS. IT SHOWS UP AS A PS4 CONTROLLER, NOT A PS5 DUALSENSE: THE DRIVER THAT MAKES THE VIRTUAL CONTROLLER (VIGEMBUS) CAN ONLY MAKE A DUALSHOCK 4 OR AN XBOX 360 PAD, SO DUALSENSE-ONLY FEATURES LIKE ADAPTIVE TRIGGERS AREN'T AVAILABLE. THE XBOX TEMPLATE JUST USES XBOX NAMES AND POSITIONS.")))
+        content.addView(profilesCard())
+        content.addView(card("VIBRATION", PEACH,
+            toggle("VIBRATE WHEN THE GAME RUMBLES", { Cfg.rumble }, { Cfg.rumble = it; if (!it) Haptics.stop() }),
+            chooser("STRENGTH", listOf("LOW" to "0", "MEDIUM" to "1", "HIGH" to "2"), { Cfg.rumbleLevel.toString() }, { Cfg.rumbleLevel = it.toInt() }),
+            pill("TEST THE VIBRATION", PAPER, icon = "check") { Haptics.test(this) },
+            note("WHEN A GAME ON THE PC RUMBLES THE CONTROLLER (EVERY TEMPLATE), THIS DEVICE VIBRATES. IT NEEDS PIXELPAD DESK 1.4.0 OR NEWER ON THE PC. A TABLET WITHOUT A VIBRATION MOTOR CAN'T DO IT.")))
         content.addView(card("CUSTOMISE", LILAC,
             note("MOVE AND RESIZE ANY CONTROL ON THE CONTROLLER SCREEN ITSELF. EACH TEMPLATE REMEMBERS ITS OWN LAYOUT."),
             hbox(pill("EDIT LAYOUT", LILAC, icon = "edit") { Cfg.pending = "controller"; finish() },
@@ -557,6 +563,30 @@ class SettingsActivity : Activity() {
                     }
                 })))
     }
+
+    /** The controller layouts kept on the PC (any connected device can use them), and whether a game's profile is followed when the game starts. */
+    private fun profilesCard(): View {
+        val box = vbox()
+        fun fill(list: List<Pair<Int, String>>) {
+            box.removeAllViews()
+            if (list.isEmpty()) box.addView(note("NO PROFILES YET. ON THE CONTROLLER SCREEN CHOOSE PROFILES > SAVE THIS LAYOUT AS A NEW PROFILE."), lp())
+            list.forEach { (id, name) ->
+                box.addView(hbox(label(name, 12f), pill("", PINK, icon = "x") { confirm("DELETE THIS PROFILE?", name) { Core.profiles.delete(id) { ok -> if (!ok) Toast.makeText(this, "COULDN'T DELETE IT: IS THE PC CONNECTED?", Toast.LENGTH_LONG).show(); refresh() } } }, weights = false)
+                    .apply { (getChildAt(0).layoutParams as LinearLayout.LayoutParams).apply { weight = 1f; width = 0 } }, lp())
+            }
+        }
+        refreshList = {
+            fill(ProfileCache.list())
+            Core.profiles.list { r -> if (r != null) { ProfileCache.saveList(r); fill(r) } }
+        }
+        refreshList()
+        return card("PROFILES KEPT ON THE PC", LILAC,
+            toggle("SWITCH TO A GAME'S PROFILE WHEN IT STARTS", { Cfg.autoProfile }, { Cfg.autoProfile = it }),
+            note("A PROFILE IS A CONTROLLER LAYOUT. IT IS SAVED ON THE PC, SO EVERY CONNECTED DEVICE CAN USE IT. IN PIXELPAD DESK (GAMES) YOU LINK STEAM GAMES TO PROFILES; WHEN A LINKED GAME STARTS, THIS DEVICE GOES TO THE CONTROLLER SCREEN AND LOADS ITS PROFILE ONCE. NOTHING IS LOCKED: PICK ANOTHER LAYOUT AT ANY TIME, AND NOTHING CHANGES WHEN THE GAME ENDS."),
+            box, pill("REFRESH THE LIST", BABY, icon = "retry") { refreshList() })
+    }
+    private var refreshList: () -> Unit = {}
+    private fun refresh() = refreshList()
 
     private val speeds = listOf(0.25f, 0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f, 2.5f, 3f, 4f)
 

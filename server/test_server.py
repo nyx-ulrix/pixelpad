@@ -293,4 +293,78 @@ assert not ns.fetch_update((_d2 / "x.exe").as_uri(), (_d2 / "S.txt").as_uri(), _
 assert not ns.fetch_update((_d2 / "x.exe").as_uri(), (_d2 / "S.txt").as_uri(), _out2), "a line for a differently named file: refused"
 (_d2 / "S.txt").write_text(_hl2.sha256(b"hello" * 1000).hexdigest() + "  x.exe\n")
 assert ns.fetch_update((_d2 / "x.exe").as_uri(), (_d2 / "S.txt").as_uri(), _out2) and os.path.getsize(_out2) == 5000
+# ---- controller profiles stored on the PC, game links, rumble ----
+import pixelpad_profiles as pp, tempfile as _tf3, shutil as _sh3
+LAY = "tri:0.84:0.24:0.11;x:0.84:0.52:0.11;sl:.16:.36:.17"
+assert pp.clean_layout(LAY) == "tri:0.840:0.240:0.110;x:0.840:0.520:0.110;sl:0.160:0.360:0.170"
+for bad in ("", "tri:0.84:0.24", "TRI:1:1:.1", "a:2:1:.1", "a:.5:.5:.9", "a:.5:.5:x", "../x:.5:.5:.1", ";".join(f"a{i}:.5:.5:.1" for i in range(41)), "a" * 1100):
+    assert pp.clean_layout(bad) is None, bad
+assert pp.clean_layout("a:1.0E-1:.5:.1") == "a:0.100:0.500:0.100"           # Kotlin writes small floats like this
+_dir = _tf3.mkdtemp(); P = pp.Profiles(_dir)
+a = P.put("  FPS\x00 shooter that has a very long name ", "ps", LAY); b = P.put("Racing", "xbox", LAY)
+assert (a, b) == (1, 2) and [n for _, n in P.list()] == ["FPS shooter that has", "Racing"], P.list()
+assert P.put("x", "evil", LAY) == 0 and P.put("x", "ps", "nonsense") == 0, "bad template or layout refused"
+assert P.put("FPS 2", "ps", LAY, 1) == 1 and P.get(1)["name"] == "FPS 2" and P.get(99) is None and P.get("1") is None
+assert all(os.path.dirname(os.path.join(_dir, n)) == _dir for n in os.listdir(_dir)), "everything stays in the profile folder"
+for i in range(3, pp.MAX_PROFILES + 1): P.put(f"p{i}", "ps", LAY)
+assert P.put("one too many", "ps", LAY) == 0 and len(P.ids()) == pp.MAX_PROFILES, "profile count is capped"
+P.link("steam", 440, 2); P.link("exe", "Game.EXE", 1)
+assert P.linked("steam", 440) == 2 and P.linked("exe", "game.exe") == 1 and P.linked("steam", 1) == 0
+P.link("steam", 440, 999); assert P.linked("steam", 440) == 0, "linking to a profile that doesn't exist removes the link"
+P.link("steam", 440, 2); assert P.delete(2) and P.linked("steam", 440) == 0 and P.get(2) is None, "deleting a profile removes its links"
+open(os.path.join(_dir, "links.json"), "w").write('{"steam": {"1": "x", "2": 3}, "exe": 5}'); assert P.links() == {"steam": {"2": 3}, "exe": {}}, "a damaged links file is tolerated"
+open(os.path.join(_dir, "7.json"), "w").write("not json"); assert P.get(7) is None
+
+# Steam: libraries, installed games, and the "something is running" watcher
+_steam = _tf3.mkdtemp(); os.makedirs(os.path.join(_steam, "steamapps"))
+_lib2 = _tf3.mkdtemp(); os.makedirs(os.path.join(_lib2, "steamapps"))
+open(os.path.join(_steam, "steamapps", "libraryfolders.vdf"), "w").write('"libraryfolders"\n{\n\t"0"\n\t{\n\t\t"path"\t\t"%s"\n\t}\n\t"1"\n\t{\n\t\t"path"\t\t"%s"\n\t}\n}\n' % (_steam.replace("\\", "\\\\"), _lib2.replace("\\", "\\\\")))
+for lib, aid, name in ((_steam, 440, "Team Fortress 2"), (_lib2, 620, "Portal 2"), (_lib2, 228980, "Steamworks Common Redistributables")):
+    open(os.path.join(lib, "steamapps", f"appmanifest_{aid}.acf"), "w").write('"AppState"\n{\n\t"appid"\t\t"%d"\n\t"name"\t\t"%s"\n\t"installdir"\t\t"x"\n}\n' % (aid, name))
+assert pp.steam_games(_steam) == [(620, "Portal 2"), (440, "Team Fortress 2")], pp.steam_games(_steam)
+assert pp.parse_vdf('"a" { "b" "c\\\\d" "e" { "f" "g" } }') == {"a": {"b": "c\\d", "e": {"f": "g"}}}
+P2 = pp.Profiles(_tf3.mkdtemp()); P2.put("FPS", "ps", LAY); P2.put("Chill", "xbox", LAY); P2.link("steam", 440, 1); P2.link("exe", "emu.exe", 2)
+seen = []; state = {"app": 0, "exes": set()}
+W = pp.Watcher(P2, lambda pid, game: seen.append((pid, game)), lambda a: {440: "Team Fortress 2"}.get(a, ""), running=lambda: state["app"], exes=lambda: state["exes"])
+W.poll(); assert seen == [] and W.current is None
+state["app"] = 440; W.poll(); W.poll(); assert seen == [(1, "Team Fortress 2")] and W.current == (1, "Team Fortress 2"), "told once, not on every poll"
+state["app"] = 730; W.poll(); assert seen == [(1, "Team Fortress 2")] and W.current is None, "an unlinked game says nothing (and doesn't undo anything)"
+state["app"] = 440; W.poll(); assert len(seen) == 2, "starting it again tells again"
+state["app"] = 0; state["exes"] = {"emu.exe"}; W.poll(); assert seen[-1] == (2, "emu.exe")
+state["exes"] = set(); W.poll(); assert W.current is None and len(seen) == 3, "ending a game says nothing"
+assert isinstance(pp.running_exes(), set) and any(e.endswith(".exe") for e in pp.running_exes()), "the program list works on this PC"
+
+# the packets: list, get, save (also resent), delete, over several 16-byte chunks; the PC tells devices about a linked game
+srv.profiles = pp.Profiles(_tf3.mkdtemp())
+def talk(op, mid, text, key="prof"):
+    del replies[:]
+    for c in pp.chunks(op, mid, text): send(c, key)
+    rx = pp.Reassembler(); out = {}
+    for r in replies:
+        t = rx.add(r)
+        if t is not None: out[r[1]] = t
+    return out
+assert talk(pp.LIST, 1, "") == {pp.R_LIST: ""}
+r_ = talk(pp.PUT, 2, f"0\nMy profile\nps\n{LAY}"); assert r_[pp.R_SAVED] == "1\nMy profile", r_
+srv.devices["prof"].prof_at = 0
+assert talk(pp.PUT, 2, f"0\nMy profile\nps\n{LAY}")[pp.R_SAVED] == "1\nMy profile" and len(srv.profiles.ids()) == 1, "a resent upload is answered again, not saved twice"
+srv.devices["prof"].prof_at = 0
+assert talk(pp.PUT, 3, "0\nBad\nevil\nzzz")[pp.R_SAVED].startswith("0"), "a bad upload is refused"
+assert talk(pp.LIST, 4, "") == {pp.R_LIST: "1\tMy profile"}
+g = talk(pp.GET, 5, "1")[pp.R_PROFILE].split("\n"); assert g[:3] == ["1", "My profile", "ps"] and g[3] == pp.clean_layout(LAY), g
+assert talk(pp.GET, 6, "55")[pp.R_PROFILE] == "" and talk(pp.GET, 7, "x; DROP")[pp.R_PROFILE] == ""
+assert talk(pp.DELETE, 8, "1")[pp.R_DELETED] == "1" and srv.profiles.ids() == [] and talk(pp.DELETE, 9, "1")[pp.R_DELETED] == "0"
+del replies[:]; srv.switch_profile(3, "Portal 2", srv.devices["prof"]); rx = pp.Reassembler(); _t = [rx.add(r) for r in replies][-1]; assert _t == "3\nPortal 2", _t
+for k in list(srv.devices): srv.drop(k)
+
+# rumble from a game reaches the device as a mode-11 packet (the real virtual pad is tested by hand with SDL)
+got_rumble = []
+class FakeVg:
+    class VDS4Gamepad:
+        def register_notification(self, cb): FakeVg.cb = cb
+import types as _ty; _fake = _ty.ModuleType("vgamepad"); _fake.VDS4Gamepad = FakeVg.VDS4Gamepad; sys.modules["vgamepad"] = _fake
+pad_ = ns.Pad(lambda l, s_: got_rumble.append((l, s_)))
+FakeVg.cb(None, None, 204, 102, 0, None); FakeVg.cb(None, None, 204, 102, 0, None); FakeVg.cb(None, None, 0, 0, 0, None)
+assert got_rumble == [(204, 102), (0, 0)], got_rumble   # only changes are passed on
+del sys.modules["vgamepad"]
 print("all protocol checks passed")

@@ -12,10 +12,12 @@ Modes: 0 trackpad, 1 tablet, 2 controller, 3 ping, 4 hello, 6 key (action = virt
 """
 import argparse, collections, ctypes, hashlib, heapq, hmac, json, os, re, shutil, socket, struct, subprocess, threading, time, urllib.request
 from ctypes import wintypes as w
+import pixelpad_profiles as pp
 
 log = print  # the desktop app swaps this for its own log window
 PEN_FMT, PAD_FMT, SIZE = "<BBBiiHbbB", "<BHbbbbBB7x", 16
 TRACKPAD, TABLET, CONTROLLER, PING, HELLO, KEY, CONFIG, TOUCH, REC = 0, 1, 2, 3, 4, 6, 7, 8, 9
+PROFILE, RUMBLE = 10, 11   # 10: controller layouts (stored on this PC) and which one to use; 11 (PC -> app): the game's rumble, large motor then small motor
 MAX_DEVICES = 4
 FRAME_IN, FRAME_OUT, MARK_IN, MARK_OUT = 48, 37, 0xA5, 0xA6   # sealed packets: app -> PC, PC -> app (see class Pairing)
 u32 = ctypes.windll.user32
@@ -311,9 +313,18 @@ DPAD = {(1, 0, 0, 0): "NORTH", (1, 0, 0, 1): "NORTHEAST", (0, 0, 0, 1): "EAST", 
         (0, 1, 0, 0): "SOUTH", (0, 1, 1, 0): "SOUTHWEST", (0, 0, 1, 0): "WEST", (1, 0, 1, 0): "NORTHWEST"}
 
 class Pad:
-    def __init__(self):
+    """The virtual controller. ViGEmBus can only make an Xbox 360 or a DualShock 4 (a PlayStation 4 pad, 054C:05C4): there is no DualSense (PS5)
+    target, so games see a PS4 controller. Games' rumble comes back through the notification and is passed to rumble(large, small)."""
+    def __init__(self, rumble=None):
         import vgamepad as vg  # needs the ViGEmBus driver: https://github.com/nefarius/ViGEmBus/releases
-        self.vg, self.pad = vg, vg.VDS4Gamepad()
+        self.vg, self.pad, self.last_rumble = vg, vg.VDS4Gamepad(), (0, 0)
+        if rumble:
+            def notify(client, target, large_motor, small_motor, led_number, user_data):   # the parameter names are the ones vgamepad checks for
+                if (large_motor, small_motor) != self.last_rumble:
+                    self.last_rumble = (large_motor, small_motor)
+                    try: rumble(large_motor, small_motor)
+                    except Exception: pass
+            self.pad.register_notification(notify)
 
     def send(self, b, lx, ly, rx, ry, lt, rt):
         vg, p = self.vg, self.pad
@@ -388,6 +399,7 @@ class Device:
         self.held = set()  # keys the tablet is holding down
         self.reply, self.rlock = None, threading.Lock()
         self.sealer = None  # set when this device talks sealed: replies are then sealed too
+        self.prof_rx, self.prof_done, self.prof_at = pp.Reassembler(), {}, 0.0   # profile messages being received, finished uploads (to answer a resend), last upload
         self.play_t = 0.0  # when the last pen packet is due to be played
         self.last_pad = None  # the last controller packet, so an unchanged one is not sent to ViGEm again
         self.touch, self.touch_failed = None, False
@@ -438,6 +450,8 @@ class Server:
         self.last_error, self.bind_errors, self.udp_ok, self.tcp_ok = "", [], False, False
         self.port, self.tsock, self.usock = None, None, None
         self.recorder, self.allow_record = KeyRecorder(), False   # off until switched on in the Desk: it listens to this keyboard
+        self.announce = True   # tell devices which profile a linked game likes when it starts (the Desk can switch this off)
+        self.profiles, self.watch, self.steam_cache = pp.Profiles(), None, (0.0, {})   # the profile library and the game watcher (started by run)
         self.pair, self.allow_legacy, self._warned = None, True, 0.0   # pair: set by the Desk. Without it (or with allow_legacy) plain 16-byte packets are accepted as before
         self.smooth_ms = 20; self.play = Playout(self)   # pen packets are replayed with the tablet's own spacing after this delay
         self.ring = {"on": True, "size": 90, "style": 0, "color": 0, "thick": 3}  # the pen cursor ring; the tablet can change it too
@@ -465,6 +479,48 @@ class Server:
     def run(self):
         threading.Thread(target=self.udp_loop, daemon=True).start()
         threading.Thread(target=self.tcp_loop, daemon=True).start()
+        self.watch = pp.Watcher(self.profiles, self.switch_profile, self.game_name); self.watch.start()
+
+    # -- profiles --
+    def game_name(self, appid):
+        """The name of a Steam game (the list is read again at most once a minute)."""
+        if time.time() - self.steam_cache[0] > 60: self.steam_cache = (time.time(), dict(pp.steam_games()))
+        return self.steam_cache[1].get(appid, "")
+
+    def switch_profile(self, pid, game, only=None):
+        """Tell devices that a linked game started and which profile it likes. They may follow it or not: nothing is locked."""
+        if not self.announce: return
+        for dev in ([only] if only else list(self.devices.values())):
+            for c in pp.chunks(pp.R_SWITCH, 0, f"{pid}\n{game}"): dev.send(c)
+
+    def profile_msg(self, dev, d):
+        """Packet mode 10: list, get, save and delete profiles. See pixelpad_profiles.py for the format."""
+        op, mid = d[1], d[2]
+        text = dev.prof_rx.add(d)
+        if text is None: return
+        if op == pp.LIST:
+            out = "\n".join(f"{i}\t{n}" for i, n in self.profiles.list()[:pp.MAX_LIST]); kind = pp.R_LIST
+        elif op == pp.GET:
+            p = self.profiles.get(int(text) if text.isascii() and text.isdigit() and len(text) < 6 else 0)
+            out = f"{p['id']}\n{p['name']}\n{p['template']}\n{p['layout']}" if p else ""; kind = pp.R_PROFILE
+        elif op == pp.PUT:
+            kind = pp.R_SAVED
+            old = dev.prof_done.get(mid)
+            if old and time.time() - old[0] < 10: out = old[1]   # the app sent it again because the answer got lost: answer again, don't save twice
+            elif time.time() - dev.prof_at < 0.5: out = "0\n"   # not faster than twice a second
+            else:
+                dev.prof_at = time.time()
+                a = text.split("\n")
+                pid = self.profiles.put(a[1], a[2], a[3], int(a[0])) if len(a) == 4 and a[0].isascii() and a[0].isdigit() and len(a[0]) < 6 else 0
+                out = f"{pid}\n{pp.clean_name(a[1]) if pid else ''}"
+                if len(dev.prof_done) > 8: dev.prof_done.clear()
+                dev.prof_done[mid] = (time.time(), out)
+                if pid: log(f"profile saved: {pp.clean_name(a[1])}")
+        elif op == pp.DELETE:
+            pid = int(text) if text.isascii() and text.isdigit() and len(text) < 6 else 0
+            out = str(pid if self.profiles.delete(pid) else 0); kind = pp.R_DELETED
+        else: return
+        for c in pp.chunks(kind, mid, out): dev.send(c)
 
     # -- devices --
     def device(self, key, transport):
@@ -485,6 +541,8 @@ class Server:
             d = self.devices[key] = Device(key, free[0], transport)
             if len(self.devices) == 1: _timer(True)
             log(f"player {d.slot} connected ({transport})")
+            if self.watch and self.watch.current:   # a linked game is already running: tell the new device too (it may ignore it)
+                threading.Timer(1.5, lambda d=d, cur=self.watch.current: d.key in self.devices and self.switch_profile(cur[0], cur[1], d)).start()
             return d
 
     def drop(self, key):
@@ -549,6 +607,7 @@ class Server:
             x, y = struct.unpack(PEN_FMT, d)[3:5]
             if x > 0 and y > 0: dev.phone = (x, y)
             return
+        if mode == PROFILE: self.profile_msg(dev, d); return
         if mode == REC:
             def answer(status, vk=0, mods=0, dev=dev): dev.send(struct.pack(PEN_FMT, REC, vk, mods, status, 0, 0, 0, 0, 0))
             if d[1] == 0: self.recorder.cancel()
@@ -605,7 +664,7 @@ class Server:
                 elif mode == CONTROLLER:
                     if not dev.pad:
                         if dev.pad_failed: return
-                        try: dev.pad = Pad()
+                        try: dev.pad = Pad(lambda large, small, d=dev: d.send(struct.pack(PEN_FMT, RUMBLE, large, small, 0, 0, 0, 0, 0, 0)))
                         except Exception as e: dev.pad_failed = True; self.last_error = str(e); log("controller mode unavailable (is ViGEmBus installed?):", e); return
                     if d == dev.last_pad: return
                     dev.last_pad = d

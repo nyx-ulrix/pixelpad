@@ -51,6 +51,13 @@ class Sender(private val usbPort: Int = 7777) {
 
     /** Called with (virtual key, modifiers, status) when the PC answers a shortcut recording. status 1 = recorded, 2 = nothing / cancelled, 3 = off on the PC. */
     @Volatile var recordListener: ((Int, Int, Int) -> Unit)? = null
+    /** Called with every profile packet (mode 10) from the PC: the answers to our requests and the "a linked game started" notice. */
+    @Volatile var profileListener: ((ByteArray) -> Unit)? = null
+    /** Puts a ready-made 16-byte packet on the link. */
+    fun raw(p: ByteArray) { if (p.size == 16) q.offer(p) }
+
+    /** Called with (large motor, small motor) 0..255 when a game on the PC rumbles the controller; (0, 0) stops, and also when the link drops. */
+    @Volatile var rumbleListener: ((Int, Int) -> Unit)? = null
     fun startRecord() = pen(9, 1, 0, 0, 0)
     fun cancelRecord() = pen(9, 0, 0, 0, 0)
 
@@ -151,6 +158,8 @@ class Sender(private val usbPort: Int = 7777) {
             while (true) {
                 val b = decode(read() ?: break) ?: continue
                 if (b[0].toInt() == PING) onPong(b)
+                else if (b[0].toInt() == 10) profileListener?.invoke(b)
+                else if (b[0].toInt() == 11) rumbleListener?.invoke(b[1].toInt() and 255, b[2].toInt() and 255)
                 else if (b[0].toInt() == 9) recordListener?.invoke(b[1].toInt() and 255, b[2].toInt() and 255, ByteBuffer.wrap(b).order(ByteOrder.LITTLE_ENDIAN).getInt(3))
             }
         } catch (e: Exception) {}
@@ -163,7 +172,7 @@ class Sender(private val usbPort: Int = 7777) {
                 Thread.sleep(500)
                 if (!active) { dirty = true; continue }   // nothing on screen: stay quiet
                 val c = connected(); if (c && !wasConnected) { syncRing(); syncSmooth() }; wasConnected = c
-                if (!c) seal?.forget()   // no answer: the PC may have restarted, so ask again with a discovery ping
+                if (!c) { seal?.forget(); rumbleListener?.invoke(0, 0) }   // no answer: the PC may have restarted, so ask again with a discovery ping; and stop any vibration
                 val now = System.nanoTime(); val n = sent.get()
                 rate = ((n - lastSent) * 1e9 / (now - lastAt)).toInt(); lastSent = n; lastAt = now
                 if (++beat % 4 == 0) Log.d("PixelPad", "link ${if (wifi) "udp" else "usb tcp"} connected=$c sent=$n rtt=${lastRttUs}us queue=${q.size} error='$lastError'")

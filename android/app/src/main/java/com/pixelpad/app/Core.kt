@@ -2,6 +2,8 @@ package com.pixelpad.app
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.os.Handler
+import android.os.Looper
 import android.view.InputDevice
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
@@ -185,6 +187,10 @@ object Cfg {
     var ringOn by P("ringOn", true); var ringSize by P("ringSize", 90); var ringStyle by P("ringStyle", 0)
     var ringColor by P("ringColor", 0); var ringThick by P("ringThick", 3); var ringTouched by P("ringTouched", false)
     var tpl by P("tpl", "ps")                // controller template
+    var profileName by P("profileName", "")   // the profile on the controller screen now ("" if it was changed afterwards or isn't one)
+    var autoProfile by P("autoProfile", true) // switch to a game's profile when the PC says that game started (it never locks you to it)
+    var rumble by P("rumble", true)          // vibrate this device when a game on the PC rumbles the controller
+    var rumbleLevel by P("rumbleLevel", 1)   // 0 low, 1 medium, 2 high
     var fightStick by P("fightStick", true)  // fighting pad: a joystick (true) or arrow buttons (false)
     var pending by P("pending", "")          // "controller" or "keys": open that screen's editor when the main screen returns
 
@@ -328,8 +334,21 @@ object Recog {
 /** One line of the connection checklist. */
 class Check(val ok: Boolean, val label: String, val hint: String)
 
+/** The last profiles the PC sent, kept so the picker still has something to show when the PC isn't answering. */
+object ProfileCache {
+    fun list(): List<Pair<Int, String>> = (Cfg.prefs.getString("profList", "") ?: "").split("\n").mapNotNull { l -> l.split("\t").takeIf { it.size == 2 }?.let { a -> a[0].toIntOrNull()?.let { it to a[1] } } }
+    fun saveList(l: List<Pair<Int, String>>) = Cfg.prefs.edit().putString("profList", l.joinToString("\n") { "${it.first}\t${it.second}" }).apply()
+    fun profile(id: Int): RemoteProfile? = Cfg.prefs.getString("prof_$id", null)?.split("\n")?.takeIf { it.size == 4 }?.let { a -> RemoteProfile(id, a[1], a[2], a[3]) }
+    fun save(p: RemoteProfile) = Cfg.prefs.edit().putString("prof_${p.id}", "${p.id}\n${p.name}\n${p.template}\n${p.layout}").apply()
+}
+
 object Core {
     val sender by lazy { Sender() }
+    private val main by lazy { Handler(Looper.getMainLooper()) }
+    /** The profile library on the PC. Created on first use; it also listens for the PC's "a linked game started" notice. */
+    val profiles by lazy { ProfileSync({ sender.raw(it) }, { ms, f -> main.postDelayed(f, ms) }, { f -> main.post(f) }).also { p -> sender.profileListener = { p.onPacket(it) } } }
+    /** A profile: from the PC if it answers, otherwise the copy kept from last time. */
+    fun profile(id: Int, done: (RemoteProfile?) -> Unit) = profiles.get(id) { p -> if (p != null) ProfileCache.save(p); done(p ?: ProfileCache.profile(id)) }
     private var onScreen = 0
 
     /** Activities call this from onStart (+1) and onStop (-1). With nothing on screen the sender stops pinging and closes its sockets. */

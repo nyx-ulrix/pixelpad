@@ -68,7 +68,9 @@ class MainActivity : Activity() {
         Cfg.init(this)
         Core.applyConnection()
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        Core.sender.rumbleListener = { large, small -> if (Cfg.rumble || (large == 0 && small == 0)) Haptics.set(this, large, small) }
         view = PixelPadView(this, Core.sender, host)
+        Core.profiles.onSwitch = { id, game -> if (Cfg.autoProfile) view.followGame(id, game) }   // a linked game started on the PC
         setContentView(view)
     }
 
@@ -115,7 +117,7 @@ class MainActivity : Activity() {
 
     override fun onPause() {
         if (scanPending) { handler.removeCallbacks(scanRun); scanPending = false; scanChecked = false }   // left before it showed: try again next time we're back
-        view.pause(); super.onPause()
+        Haptics.stop(); view.pause(); super.onPause()
     }
     override fun onStart() { super.onStart(); Core.visible(1) }
     override fun onStop() { Core.visible(-1); super.onStop() }

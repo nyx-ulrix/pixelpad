@@ -276,7 +276,23 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
     /** Freezes the computed sizes into the layout once the user starts customising it. */
     private fun bake() { if (autoFit) { val s = ctlBasis() / padH(); ctls.forEach { it.fr *= gK[it.group] * s }; autoFit = false } }   // keep exactly the size on screen
 
-    private fun saveLayout() { bake(); keepInside(); saveNow() }
+    private fun saveLayout() { bake(); keepInside(); saveNow(); Cfg.profileName = "" }
+
+    /** The layout on screen, as the text a profile keeps. */
+    private fun layoutText(): String { bake(); keepInside(); return ctls.joinToString(";") { String.format(java.util.Locale.US, "%s:%.3f:%.3f:%.3f", it.id, it.fx, it.fy, it.fr) } }
+
+    /** Puts a profile on screen: its template, with the positions and sizes it holds. */
+    fun applyProfile(p: RemoteProfile) {
+        ctrlReset()
+        prefs.edit().putString(if (p.template == "ps") "layout" else "layout_${p.template}", p.layout).apply()
+        loadTemplate(p.template); Cfg.profileName = p.name; invalidate()
+    }
+
+    /** A game linked to a profile started on the PC: go to the controller screen and use that profile. Nothing is locked: change the layout whenever you like. */
+    fun followGame(id: Int, game: String) {
+        setMode(CONTROLLER)
+        Core.profile(id) { p -> if (p != null) { applyProfile(p); android.widget.Toast.makeText(context, "${game.uppercase()}: PROFILE ${p.name.uppercase()}", android.widget.Toast.LENGTH_LONG).show() } }
+    }
     private fun saveNow() = prefs.edit().putString(layoutKey(), ctls.joinToString(";") { "${it.id}:${it.fx}:${it.fy}:${it.fr}" }).apply()
 
     // ---------- lifecycle ----------
@@ -1292,10 +1308,16 @@ class PixelPadView(ctx: Context, private val tx: Sender, private val host: Host)
         if (dark) return
         if (!editing) {
             val y0 = height - 44 * dp
-            button(c, RectF(width / 2f - 91 * dp, y0, width / 2f - 3 * dp, y0 + 32 * dp), LILAC, "EDIT", 12f, "edit") { editing = true; selected = null }
-            button(c, RectF(width / 2f + 3 * dp, y0, width / 2f + 91 * dp, y0 + 32 * dp), PINK, tplLabel(tpl), 12f, "gamepad") {
-                ctrlReset(); loadTemplate(TEMPLATES[(TEMPLATES.indexOf(tpl) + 1) % TEMPLATES.size])
+            val bx = width / 2f - 138 * dp
+            button(c, RectF(bx, y0, bx + 88 * dp, y0 + 32 * dp), LILAC, "EDIT", 12f, "edit") { editing = true; selected = null }
+            button(c, RectF(bx + 94 * dp, y0, bx + 182 * dp, y0 + 32 * dp), PINK, tplLabel(tpl), 12f, "gamepad") {
+                ctrlReset(); Cfg.profileName = ""; loadTemplate(TEMPLATES[(TEMPLATES.indexOf(tpl) + 1) % TEMPLATES.size])
             }
+            button(c, RectF(bx + 188 * dp, y0, bx + 276 * dp, y0 + 32 * dp), GREEN, "PROFILES", 12f, "keys") {
+                (context as? android.app.Activity)?.let { ProfilesUi.picker(it, tpl, { layoutText() }) { p -> applyProfile(p) } }
+            }
+            if (Cfg.profileName.isNotEmpty())   // which profile is on screen
+                pill(c, RectF(width / 2f - 110 * dp, barH + 8 * dp, width / 2f + 110 * dp, barH + 34 * dp), LILAC, "PROFILE: ${Cfg.profileName}", INK, 10.5f, "gamepad")
             return
         }
         text(c, if (selected == null) "TOUCH A CONTROL, THEN DRAG IT" else "DRAG TO MOVE · USE − AND + TO RESIZE", width / 2f, barH + 26 * dp, 11f, Paint.Align.CENTER, INK, width - 24 * dp)
