@@ -683,13 +683,19 @@ def gm_build(force=False):
     if sig == gm_sig[0] and not force: return
     gm_sig[0] = sig
     for c in gm_in.winfo_children(): c.destroy()
-    ids = [0] + [i for i, _ in profs]
-    names = ["NO PROFILE"] + [n if sum(1 for _, m in profs if m == n) == 1 else f"{n} #{i}" for i, n in profs]
+    labels = {0: "NO PROFILE"}   # what each choice is called; two profiles with the same name (or one called NO PROFILE) get their number added
+    for i, n in profs: labels[i] = n if sum(1 for _, m in profs if m == n) == 1 and n.upper() != "NO PROFILE" else f"{n} #{i}"
     def head(text): label(gm_in, text=text).pack(fill="x", pady=(8, 2))
     def chooser(parent, pid, kind, key):
-        var = tk.StringVar(value=names[ids.index(pid)] if pid in ids else names[0])
-        m = tk.OptionMenu(parent, var, *names, command=lambda v: (srv.profiles.link(kind, key, ids[names.index(v)]), gm_sig.__setitem__(0, None)))
-        m.config(bg=PAPER, fg=INK, font=FS, highlightbackground=INK, relief="solid", width=18, anchor="w"); return m
+        """A button that opens the list of profiles; the list is only built when it is opened, so hundreds of games stay quick."""
+        var = tk.StringVar(value=labels.get(pid, labels[0]))
+        mb = tk.Menubutton(parent, textvariable=var, bg=PAPER, fg=INK, font=FS, highlightbackground=INK, relief="solid", width=18, anchor="w", indicatoron=True)
+        def pick(i): var.set(labels[i]); srv.profiles.link(kind, key, i); gm_sig.__setitem__(0, None)
+        def fill():
+            menu.delete(0, "end")
+            for i, lab in labels.items(): menu.add_command(label=lab, command=lambda i=i: pick(i))
+        menu = tk.Menu(mb, tearoff=0, postcommand=fill); mb.config(menu=menu)
+        return mb
     head("PROFILES ON THIS PC")
     if not profs: hint(gm_in, "NONE YET: ON A DEVICE OPEN THE CONTROLLER SCREEN, ARRANGE THE BUTTONS, THEN PROFILES > SAVE THIS LAYOUT.", wrap=480).pack(fill="x")
     for pid, name in profs:
@@ -715,7 +721,7 @@ def gm_build(force=False):
     def add_program():
         from tkinter import filedialog
         p = filedialog.askopenfilename(title="Pick a program", filetypes=[("Programs", "*.exe")])
-        if p and profs: srv.profiles.link("exe", os.path.basename(p), ids[1]); gm_build(True)   # linked to your first profile; change it in the list
+        if p and profs: srv.profiles.link("exe", os.path.basename(p), profs[0][0]); gm_build(True)   # linked to your first profile; change it in the list
     pill(gm_in, "ADD A PROGRAM", add_program, BABY, "plus").pack(anchor="w", pady=4)
     pill(gm_in, "REFRESH THE LISTS", lambda: (threading.Thread(target=lambda: (gm_read_games(), root.after(0, gm_build, True)), daemon=True).start()), BABY, "retry").pack(anchor="w", pady=(0, 6))
 
